@@ -41,7 +41,7 @@ public class KubernetesDeclarativeAgentScript extends DeclarativeAgentScript<Kub
             }
             script.podTemplate(describable.asArgs) {
                 script.node(describable.label) {
-                    CheckoutScript.doCheckout(script, describable, describable.customWorkspace) {
+                    CheckoutScript.doCheckout(script, describable, describable.customHome) {
                         // what container to use for the main body
                         def container = describable.defaultContainer ?: 'jnlp'
 

@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-package org.csanchez.jenkins.plugins.kubernetes.volumes.workspace;
+package org.csanchez.jenkins.plugins.kubernetes.volumes.home;
 
 import javax.annotation.CheckForNull;
 import javax.annotation.Nonnull;
@@ -35,32 +35,19 @@ import hudson.model.Descriptor;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
 
-public class NfsWorkspaceVolume extends WorkspaceVolume {
-    private String serverAddress;
-    private String serverPath;
+public class PersistentVolumeClaimHomeVolume extends HomeVolume {
+    private String claimName;
     @CheckForNull
     private Boolean readOnly;
 
     @DataBoundConstructor
-    public NfsWorkspaceVolume(String serverAddress, String serverPath, Boolean readOnly) {
-        this.serverAddress = serverAddress;
-        this.serverPath = serverPath;
+    public PersistentVolumeClaimHomeVolume(String claimName, Boolean readOnly) {
+        this.claimName = claimName;
         this.readOnly = readOnly;
     }
 
-    public Volume buildVolume(String volumeName) {
-        return new VolumeBuilder()
-                .withName(volumeName)
-                .withNewNfs(getServerPath(), getReadOnly(), getServerAddress())
-                .build();
-    }
-
-    public String getServerAddress() {
-        return serverAddress;
-    }
-
-    public String getServerPath() {
-        return serverPath;
+    public String getClaimName() {
+        return claimName;
     }
 
     @Nonnull
@@ -68,12 +55,23 @@ public class NfsWorkspaceVolume extends WorkspaceVolume {
         return readOnly != null && readOnly;
     }
 
+    @Override
+    public Volume buildVolume(String volumeName) {
+        return new VolumeBuilder()
+                .withName(volumeName)
+                .withNewPersistentVolumeClaim()
+                    .withClaimName(getClaimName())
+                    .withReadOnly(getReadOnly())
+                .and()
+                .build();
+    }
+
     @Extension
-    @Symbol("nfsWorkspaceVolume")
-    public static class DescriptorImpl extends Descriptor<WorkspaceVolume> {
+    @Symbol("persistentVolumeClaimHomeVolume")
+    public static class DescriptorImpl extends Descriptor<HomeVolume> {
         @Override
         public String getDisplayName() {
-            return "NFS Workspace Volume";
+            return "Persistent Volume Claim Home Volume";
         }
     }
 }

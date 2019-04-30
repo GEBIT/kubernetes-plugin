@@ -20,7 +20,7 @@ import org.apache.commons.lang.StringUtils;
 import org.csanchez.jenkins.plugins.kubernetes.model.TemplateEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.pod.retention.PodRetention;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.PodVolume;
-import org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.WorkspaceVolume;
+import org.csanchez.jenkins.plugins.kubernetes.volumes.home.HomeVolume;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.DoNotUse;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
@@ -107,8 +107,8 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
 
     private String resourceLimitMemory;
 
-    private boolean customWorkspaceVolumeEnabled;
-    private WorkspaceVolume workspaceVolume;
+    private boolean customHomeVolumeEnabled;
+    private HomeVolume homeVolume;
 
     private final List<PodVolume> volumes = new ArrayList<PodVolume>();
 
@@ -152,7 +152,7 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
         this.setSlaveConnectTimeout(from.getSlaveConnectTimeout());
         this.setActiveDeadlineSeconds(from.getActiveDeadlineSeconds());
         this.setVolumes(from.getVolumes());
-        this.setWorkspaceVolume(from.getWorkspaceVolume());
+        this.setHomeVolume(from.getHomeVolume());
         this.setYamls(from.getYamls());
         this.setNodeProperties(from.getNodeProperties());
         this.setPodRetention(from.getPodRetention());
@@ -243,12 +243,12 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
     @DataBoundSetter
     @Deprecated
     public void setRemoteFs(String remoteFs) {
-        getFirstContainer().ifPresent((i) -> i.setWorkingDir(remoteFs));
+        getFirstContainer().ifPresent((i) -> i.setHomeDir(remoteFs));
     }
 
     @Deprecated
     public String getRemoteFs() {
-        return getFirstContainer().map(ContainerTemplate::getWorkingDir).orElse(null);
+        return getFirstContainer().map(ContainerTemplate::getHomeDir).orElse(null);
     }
 
     public void setInstanceCap(int instanceCap) {
@@ -580,22 +580,22 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
         return volumes;
     }
 
-    public boolean isCustomWorkspaceVolumeEnabled() {
-        return customWorkspaceVolumeEnabled;
+    public boolean isCustomHomeVolumeEnabled() {
+        return customHomeVolumeEnabled;
     }
 
     @DataBoundSetter
-    public void setCustomWorkspaceVolumeEnabled(boolean customWorkspaceVolumeEnabled) {
-        this.customWorkspaceVolumeEnabled = customWorkspaceVolumeEnabled;
+    public void setCustomHomeVolumeEnabled(boolean customHomeVolumeEnabled) {
+        this.customHomeVolumeEnabled = customHomeVolumeEnabled;
     }
 
-    public WorkspaceVolume getWorkspaceVolume() {
-        return workspaceVolume;
+    public HomeVolume getHomeVolume() {
+        return homeVolume;
     }
 
     @DataBoundSetter
-    public void setWorkspaceVolume(WorkspaceVolume workspaceVolume) {
-        this.workspaceVolume = workspaceVolume;
+    public void setHomeVolume(HomeVolume homeVolume) {
+        this.homeVolume = homeVolume;
     }
 
     @DataBoundSetter
@@ -680,7 +680,7 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
             containerTemplate.setResourceLimitCpu(resourceLimitCpu);
             containerTemplate.setResourceLimitMemory(resourceLimitMemory);
             containerTemplate.setResourceRequestCpu(resourceRequestCpu);
-            containerTemplate.setWorkingDir(remoteFs);
+            containerTemplate.setHomeDir(remoteFs);
             containers.add(containerTemplate);
         }
         
@@ -812,8 +812,8 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
                 (resourceRequestMemory == null ? "" : ", resourceRequestMemory='" + resourceRequestMemory + '\'') +
                 (resourceLimitCpu == null ? "" : ", resourceLimitCpu='" + resourceLimitCpu + '\'') +
                 (resourceLimitMemory == null ? "" : ", resourceLimitMemory='" + resourceLimitMemory + '\'') +
-                (!customWorkspaceVolumeEnabled ? "" : ", customWorkspaceVolumeEnabled=" + customWorkspaceVolumeEnabled) +
-                (workspaceVolume == null ? "" : ", workspaceVolume=" + workspaceVolume) +
+                (!customHomeVolumeEnabled ? "" : ", customHomeVolumeEnabled=" + customHomeVolumeEnabled) +
+                (homeVolume == null ? "" : ", homeVolume=" + homeVolume) +
                 (volumes == null || volumes.isEmpty() ? "" : ", volumes=" + volumes) +
                 (containers == null || containers.isEmpty() ? "" : ", containers=" + containers) +
                 (envVars == null || envVars.isEmpty() ? "" : ", envVars=" + envVars) +

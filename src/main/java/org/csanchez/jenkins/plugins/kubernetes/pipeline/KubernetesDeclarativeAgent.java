@@ -27,7 +27,7 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
     private static final Logger LOGGER = Logger.getLogger(KubernetesDeclarativeAgent.class.getName());
 
     private String label;
-    private String customWorkspace;
+    private String customHome;
 
     private String cloud;
     private String inheritFrom;
@@ -37,7 +37,7 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
     private String serviceAccount;
     private String nodeSelector;
     private String namespace;
-    private String workingDir;
+    private String homeDir;
     private int activeDeadlineSeconds;
     private int slaveConnectTimeout;
 
@@ -67,13 +67,13 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
     }
 
     @CheckForNull
-    public String getCustomWorkspace() {
-        return customWorkspace;
+    public String getCustomHome() {
+        return customHome;
     }
 
     @DataBoundSetter
-    public void setCustomWorkspace(String customWorkspace) {
-        this.customWorkspace = customWorkspace;
+    public void setCustomHome(String customHome) {
+        this.customHome = customHome;
     }
 
     public String getCloud() {
@@ -139,13 +139,13 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
         this.namespace = namespace;
     }
 
-    public String getWorkingDir() {
-        return workingDir;
+    public String getHomeDir() {
+        return homeDir;
     }
 
     @DataBoundSetter
-    public void setWorkingDir(String workingDir) {
-        this.workingDir = workingDir;
+    public void setHomeDir(String homeDir) {
+        this.homeDir = homeDir;
     }
 
     public String getYaml() {
@@ -220,8 +220,8 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
         argMap.put("label", label);
         argMap.put("name", label);
 
-        if (!StringUtils.isEmpty(customWorkspace)) {
-            argMap.put("customWorkspace", customWorkspace);
+        if (!StringUtils.isEmpty(customHome)) {
+            argMap.put("customHome", customHome);
         }
 
         List<ContainerTemplate> containerTemplates = getContainerTemplates();
@@ -258,8 +258,8 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
         if (!StringUtils.isEmpty(namespace)) {
             argMap.put("namespace", namespace);
         }
-        if (!StringUtils.isEmpty(workingDir)) {
-            argMap.put("workingDir", workingDir);
+        if (!StringUtils.isEmpty(homeDir)) {
+            argMap.put("homeDir", homeDir);
         }
         if (activeDeadlineSeconds != 0) {
             argMap.put("activeDeadlineSeconds", activeDeadlineSeconds);

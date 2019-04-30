@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-package org.csanchez.jenkins.plugins.kubernetes.volumes.workspace;
+package org.csanchez.jenkins.plugins.kubernetes.volumes.home;
 
 import java.io.Serializable;
 
@@ -32,7 +32,7 @@ import io.fabric8.kubernetes.api.model.Volume;
 /**
  * Base class for all Kubernetes volume types
  */
-public abstract class WorkspaceVolume extends AbstractDescribableImpl<WorkspaceVolume> implements Serializable {
+public abstract class HomeVolume extends AbstractDescribableImpl<HomeVolume> implements Serializable {
 
     private static final long serialVersionUID = 5367004248055474414L;
 

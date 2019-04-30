@@ -14,7 +14,7 @@ import org.csanchez.jenkins.plugins.kubernetes.PodTemplate;
 import org.csanchez.jenkins.plugins.kubernetes.model.TemplateEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.pod.retention.PodRetention;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.PodVolume;
-import org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.WorkspaceVolume;
+import org.csanchez.jenkins.plugins.kubernetes.volumes.home.HomeVolume;
 import org.jenkinsci.plugins.workflow.steps.Step;
 import org.jenkinsci.plugins.workflow.steps.StepContext;
 import org.jenkinsci.plugins.workflow.steps.StepDescriptor;
@@ -43,7 +43,7 @@ public class PodTemplateStep extends Step implements Serializable {
     private List<ContainerTemplate> containers = new ArrayList<>();
     private List<TemplateEnvVar> envVars = new ArrayList<>();
     private List<PodVolume> volumes = new ArrayList<PodVolume>();
-    private WorkspaceVolume workspaceVolume;
+    private HomeVolume homeVolume;
     private List<PodAnnotation> annotations = new ArrayList<>();
     private List<String> imagePullSecrets = new ArrayList<>();
 
@@ -55,7 +55,7 @@ public class PodTemplateStep extends Step implements Serializable {
     private String serviceAccount;
     private String nodeSelector;
     private Node.Mode nodeUsageMode = Node.Mode.EXCLUSIVE;
-    private String workingDir = ContainerTemplate.DEFAULT_WORKING_DIR;
+    private String homeDir = ContainerTemplate.DEFAULT_HOME_DIR;
 
     private String yaml;
     private PodRetention podRetention;
@@ -131,13 +131,13 @@ public class PodTemplateStep extends Step implements Serializable {
         this.volumes = volumes;
     }
 
-    public WorkspaceVolume getWorkspaceVolume() {
-        return workspaceVolume;
+    public HomeVolume getHomeVolume() {
+        return homeVolume;
     }
 
     @DataBoundSetter
-    public void setWorkspaceVolume(WorkspaceVolume workspaceVolume) {
-        this.workspaceVolume = workspaceVolume;
+    public void setHomeVolume(HomeVolume homeVolume) {
+        this.homeVolume = homeVolume;
     }
 
     public int getInstanceCap() {
@@ -205,13 +205,13 @@ public class PodTemplateStep extends Step implements Serializable {
         this.nodeUsageMode = Node.Mode.valueOf(nodeUsageMode);
     }
 
-    public String getWorkingDir() {
-        return workingDir;
+    public String getHomeDir() {
+        return homeDir;
     }
 
     @DataBoundSetter
-    public void setWorkingDir(String workingDir) {
-        this.workingDir = workingDir;
+    public void setHomeDir(String homeDir) {
+        this.homeDir = homeDir;
     }
 
     @Override

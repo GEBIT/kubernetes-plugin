@@ -22,10 +22,7 @@
  * THE SOFTWARE.
  */
 
-package org.csanchez.jenkins.plugins.kubernetes.volumes.workspace;
-
-import javax.annotation.CheckForNull;
-import javax.annotation.Nonnull;
+package org.csanchez.jenkins.plugins.kubernetes.volumes.home;
 
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -35,43 +32,31 @@ import hudson.model.Descriptor;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
 
-public class PersistentVolumeClaimWorkspaceVolume extends WorkspaceVolume {
-    private String claimName;
-    @CheckForNull
-    private Boolean readOnly;
+public class HostPathHomeVolume extends HomeVolume {
+    private String hostPath;
 
     @DataBoundConstructor
-    public PersistentVolumeClaimWorkspaceVolume(String claimName, Boolean readOnly) {
-        this.claimName = claimName;
-        this.readOnly = readOnly;
+    public HostPathHomeVolume(String hostPath) {
+        this.hostPath = hostPath;
     }
 
-    public String getClaimName() {
-        return claimName;
-    }
-
-    @Nonnull
-    public Boolean getReadOnly() {
-        return readOnly != null && readOnly;
-    }
-
-    @Override
     public Volume buildVolume(String volumeName) {
-        return new VolumeBuilder()
-                .withName(volumeName)
-                .withNewPersistentVolumeClaim()
-                    .withClaimName(getClaimName())
-                    .withReadOnly(getReadOnly())
-                .and()
+        return new VolumeBuilder() //
+                .withName(volumeName) //
+                .withNewHostPath().withPath(getHostPath()).withType("DirectoryOrCreate").endHostPath() //
                 .build();
     }
 
+    public String getHostPath() {
+        return hostPath;
+    }
+
     @Extension
-    @Symbol("persistentVolumeClaimWorkspaceVolume")
-    public static class DescriptorImpl extends Descriptor<WorkspaceVolume> {
+    @Symbol("hostPathHomeVolume")
+    public static class DescriptorImpl extends Descriptor<HomeVolume> {
         @Override
         public String getDisplayName() {
-            return "Persistent Volume Claim Workspace Volume";
+            return "Host Path Home Volume";
         }
     }
 }

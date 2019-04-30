@@ -30,7 +30,7 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
 
     private static final long serialVersionUID = 4212681620316294146L;
 
-    public static final String DEFAULT_WORKING_DIR = "/home/jenkins";
+    public static final String DEFAULT_HOME_DIR = "/home/jenkins";
 
     private String name;
 
@@ -40,7 +40,7 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
 
     private boolean alwaysPullImage;
 
-    private String workingDir = DEFAULT_WORKING_DIR;
+    private String homeDir = DEFAULT_HOME_DIR;
 
     private String command;
 
@@ -87,7 +87,7 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
         this.setImage(from.getImage());
         this.setPrivileged(from.isPrivileged());
         this.setAlwaysPullImage(from.isAlwaysPullImage());
-        this.setWorkingDir(from.getWorkingDir());
+        this.setHomeDir(from.getHomeDir());
         this.setCommand(from.getCommand());
         this.setArgs(from.getArgs());
         this.setTtyEnabled(from.isTtyEnabled());
@@ -151,12 +151,12 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
     }
 
     @DataBoundSetter
-    public void setWorkingDir(String workingDir) {
-        this.workingDir = Util.fixEmpty(workingDir);
+    public void setHomeDir(String homeDir) {
+        this.homeDir = Util.fixEmpty(homeDir);
     }
 
-    public String getWorkingDir() {
-        return workingDir;
+    public String getHomeDir() {
+        return homeDir;
     }
 
     @DataBoundSetter
@@ -290,7 +290,7 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
                 (image == null ? "" : ", image='" + image + '\'') +
                 (!privileged ? "" : ", privileged=" + privileged) +
                 (!alwaysPullImage ? "" : ", alwaysPullImage=" + alwaysPullImage) +
-                (workingDir == null ? "" : ", workingDir='" + workingDir + '\'') +
+                (homeDir == null ? "" : ", homeDir='" + homeDir + '\'') +
                 (command == null ? "" : ", command='" + command + '\'') +
                 (args == null ? "" : ", args='" + args + '\'') +
                 (!ttyEnabled ? "" : ", ttyEnabled=" + ttyEnabled) +
@@ -330,7 +330,7 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
         if (image != null ? !image.equals(that.image) : that.image != null) {
             return false;
         }
-        if (workingDir != null ? !workingDir.equals(that.workingDir) : that.workingDir != null) {
+        if (homeDir != null ? !homeDir.equals(that.homeDir) : that.homeDir != null) {
             return false;
         }
         if (command != null ? !command.equals(that.command) : that.command != null) {
@@ -369,7 +369,7 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
         result = 31 * result + (image != null ? image.hashCode() : 0);
         result = 31 * result + (privileged ? 1 : 0);
         result = 31 * result + (alwaysPullImage ? 1 : 0);
-        result = 31 * result + (workingDir != null ? workingDir.hashCode() : 0);
+        result = 31 * result + (homeDir != null ? homeDir.hashCode() : 0);
         result = 31 * result + (command != null ? command.hashCode() : 0);
         result = 31 * result + (args != null ? args.hashCode() : 0);
         result = 31 * result + (ttyEnabled ? 1 : 0);
@@ -385,7 +385,7 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
     }
 
     private Object readResolve() {
-        this.workingDir = Util.fixEmpty(workingDir);
+        this.homeDir = Util.fixEmpty(homeDir);
         return this;
     }
 }

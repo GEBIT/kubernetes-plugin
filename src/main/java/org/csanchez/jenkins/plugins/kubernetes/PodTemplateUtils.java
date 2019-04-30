@@ -30,7 +30,7 @@ import javax.annotation.Nonnull;
 import org.apache.commons.lang.StringUtils;
 import org.csanchez.jenkins.plugins.kubernetes.model.TemplateEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.PodVolume;
-import org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.WorkspaceVolume;
+import org.csanchez.jenkins.plugins.kubernetes.volumes.home.HomeVolume;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
@@ -81,7 +81,7 @@ public class PodTemplateUtils {
         String image = Strings.isNullOrEmpty(template.getImage()) ? parent.getImage() : template.getImage();
         boolean privileged = template.isPrivileged() ? template.isPrivileged() : (parent.isPrivileged() ? parent.isPrivileged() : false);
         boolean alwaysPullImage = template.isAlwaysPullImage() ? template.isAlwaysPullImage() : (parent.isAlwaysPullImage() ? parent.isAlwaysPullImage() : false);
-        String workingDir = Strings.isNullOrEmpty(template.getWorkingDir()) ? (Strings.isNullOrEmpty(parent.getWorkingDir()) ? DEFAULT_WORKING_DIR : parent.getWorkingDir()) : template.getWorkingDir();
+        String homeDir = Strings.isNullOrEmpty(template.getHomeDir()) ? (Strings.isNullOrEmpty(parent.getHomeDir()) ? DEFAULT_HOME_DIR : parent.getHomeDir()) : template.getHomeDir();
         String command = Strings.isNullOrEmpty(template.getCommand()) ? parent.getCommand() : template.getCommand();
         String args = Strings.isNullOrEmpty(template.getArgs()) ? parent.getArgs() : template.getArgs();
         boolean ttyEnabled = template.isTtyEnabled() ? template.isTtyEnabled() : (parent.isTtyEnabled() ? parent.isTtyEnabled() : false);
@@ -104,7 +104,7 @@ public class PodTemplateUtils {
         combined.setResourceLimitMemory(resourceLimitMemory);
         combined.setResourceRequestCpu(resourceRequestCpu);
         combined.setResourceRequestMemory(resourceRequestMemory);
-        combined.setWorkingDir(workingDir);
+        combined.setHomeDir(homeDir);
         combined.setPrivileged(privileged);
         combined.setEnvVars(combineEnvVars(parent, template));
         combined.setPorts(new ArrayList<>(ports.values()));
@@ -133,8 +133,8 @@ public class PodTemplateUtils {
                 : (parent.getSecurityContext() != null ? parent.getSecurityContext().getPrivileged() : Boolean.FALSE);
         String imagePullPolicy = Strings.isNullOrEmpty(template.getImagePullPolicy()) ? parent.getImagePullPolicy()
                 : template.getImagePullPolicy();
-        String workingDir = Strings.isNullOrEmpty(template.getWorkingDir())
-                ? (Strings.isNullOrEmpty(parent.getWorkingDir()) ? DEFAULT_WORKING_DIR : parent.getWorkingDir())
+        String homeDir = Strings.isNullOrEmpty(template.getWorkingDir())
+                ? (Strings.isNullOrEmpty(parent.getWorkingDir()) ? DEFAULT_HOME_DIR : parent.getWorkingDir())
                 : template.getWorkingDir();
         List<String> command = template.getCommand() == null ? parent.getCommand() : template.getCommand();
         List<String> args = template.getArgs() == null ? parent.getArgs() : template.getArgs();
@@ -151,7 +151,7 @@ public class PodTemplateUtils {
                 .withName(name) //
                 .withImagePullPolicy(imagePullPolicy) //
                 .withCommand(command) //
-                .withWorkingDir(workingDir) //
+                .withWorkingDir(homeDir) //
                 .withArgs(args) //
                 .withTty(tty) //
                 .withNewResources() //
@@ -325,7 +325,7 @@ public class PodTemplateUtils {
         combinedVolumes.putAll(parentVolumes);
         combinedVolumes.putAll(template.getVolumes().stream().collect(toMap(v -> v.getMountPath(), v -> v)));
 
-        WorkspaceVolume workspaceVolume = template.isCustomWorkspaceVolumeEnabled() && template.getWorkspaceVolume() != null ? template.getWorkspaceVolume() : parent.getWorkspaceVolume();
+        HomeVolume homeVolume = template.isCustomHomeVolumeEnabled() && template.getHomeVolume() != null ? template.getHomeVolume() : parent.getHomeVolume();
 
         //Tool location node properties
         PodTemplateToolLocation toolLocationNodeProperties = parent.getNodeProperties();
@@ -339,7 +339,7 @@ public class PodTemplateUtils {
         podTemplate.setServiceAccount(serviceAccount);
         podTemplate.setEnvVars(combineEnvVars(parent, template));
         podTemplate.setContainers(new ArrayList<>(combinedContainers.values()));
-        podTemplate.setWorkspaceVolume(workspaceVolume);
+        podTemplate.setHomeVolume(homeVolume);
         podTemplate.setVolumes(new ArrayList<>(combinedVolumes.values()));
         podTemplate.setImagePullSecrets(new ArrayList<>(imagePullSecrets));
         podTemplate.setAnnotations(new ArrayList<>(podAnnotations));
@@ -364,8 +364,8 @@ public class PodTemplateUtils {
         podTemplate.setServiceAccount(!Strings.isNullOrEmpty(template.getServiceAccount()) ?
                                       template.getServiceAccount() : parent.getServiceAccount());
 
-        podTemplate.setCustomWorkspaceVolumeEnabled(template.isCustomWorkspaceVolumeEnabled() ?
-                                                    template.isCustomWorkspaceVolumeEnabled() : parent.isCustomWorkspaceVolumeEnabled());
+        podTemplate.setCustomHomeVolumeEnabled(template.isCustomHomeVolumeEnabled() ?
+                                                    template.isCustomHomeVolumeEnabled() : parent.isCustomHomeVolumeEnabled());
         podTemplate.setPodRetention(template.getPodRetention());
 
         List<String> yamls = new ArrayList<>(parent.getYamls());

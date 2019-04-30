@@ -6,7 +6,7 @@ pipeline {
                 containerTemplate{
                         name 'openjdk'
                         image 'openjdk'
-                        workingDir '/home/jenkins'
+                        homeDir '/home/jenkins'
                         ttyEnabled true
                         command 'cat'
                         args ''

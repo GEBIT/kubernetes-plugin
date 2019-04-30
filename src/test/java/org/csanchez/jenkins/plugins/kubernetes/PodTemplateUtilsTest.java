@@ -239,7 +239,7 @@ public class PodTemplateUtilsTest {
         podTemplate.setIdleMinutes(99);
         podTemplate.setActiveDeadlineSeconds(99);
         podTemplate.setServiceAccount("ServiceAccount");
-        podTemplate.setCustomWorkspaceVolumeEnabled(true);
+        podTemplate.setCustomHomeVolumeEnabled(true);
         podTemplate.setYaml("Yaml");
 
         PodTemplate selfCombined = combine(podTemplate, podTemplate);
@@ -257,7 +257,7 @@ public class PodTemplateUtilsTest {
         assertEquals(99, selfCombined.getIdleMinutes());
         assertEquals(99, selfCombined.getActiveDeadlineSeconds());
         assertEquals("ServiceAccount", selfCombined.getServiceAccount());
-        assertEquals(true, selfCombined.isCustomWorkspaceVolumeEnabled());
+        assertEquals(true, selfCombined.isCustomHomeVolumeEnabled());
         assertThat(selfCombined.getYamls(), hasItems("Yaml", "Yaml"));
     }
 

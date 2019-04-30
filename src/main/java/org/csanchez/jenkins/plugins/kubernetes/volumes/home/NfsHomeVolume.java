@@ -22,7 +22,10 @@
  * THE SOFTWARE.
  */
 
-package org.csanchez.jenkins.plugins.kubernetes.volumes.workspace;
+package org.csanchez.jenkins.plugins.kubernetes.volumes.home;
+
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
 
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -32,31 +35,45 @@ import hudson.model.Descriptor;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
 
-public class HostPathWorkspaceVolume extends WorkspaceVolume {
-    private String hostPath;
+public class NfsHomeVolume extends HomeVolume {
+    private String serverAddress;
+    private String serverPath;
+    @CheckForNull
+    private Boolean readOnly;
 
     @DataBoundConstructor
-    public HostPathWorkspaceVolume(String hostPath) {
-        this.hostPath = hostPath;
+    public NfsHomeVolume(String serverAddress, String serverPath, Boolean readOnly) {
+        this.serverAddress = serverAddress;
+        this.serverPath = serverPath;
+        this.readOnly = readOnly;
     }
 
     public Volume buildVolume(String volumeName) {
-        return new VolumeBuilder() //
-                .withName(volumeName) //
-                .withNewHostPath().withPath(getHostPath()).endHostPath() //
+        return new VolumeBuilder()
+                .withName(volumeName)
+                .withNewNfs(getServerPath(), getReadOnly(), getServerAddress())
                 .build();
     }
 
-    public String getHostPath() {
-        return hostPath;
+    public String getServerAddress() {
+        return serverAddress;
+    }
+
+    public String getServerPath() {
+        return serverPath;
+    }
+
+    @Nonnull
+    public Boolean getReadOnly() {
+        return readOnly != null && readOnly;
     }
 
     @Extension
-    @Symbol("hostPathWorkspaceVolume")
-    public static class DescriptorImpl extends Descriptor<WorkspaceVolume> {
+    @Symbol("nfsHomeVolume")
+    public static class DescriptorImpl extends Descriptor<HomeVolume> {
         @Override
         public String getDisplayName() {
-            return "Host Path Workspace Volume";
+            return "NFS Home Volume";
         }
     }
 }

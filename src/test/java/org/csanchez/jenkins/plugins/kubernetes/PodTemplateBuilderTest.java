@@ -23,7 +23,7 @@ import org.csanchez.jenkins.plugins.kubernetes.model.TemplateEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.EmptyDirVolume;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.HostPathVolume;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.PodVolume;
-import org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.EmptyDirWorkspaceVolume;
+import org.csanchez.jenkins.plugins.kubernetes.volumes.home.EmptyDirHomeVolume;
 import org.hamcrest.Matcher;
 import org.junit.Rule;
 import org.junit.Test;
@@ -123,12 +123,12 @@ public class PodTemplateBuilderTest {
 
     @Test
     @Issue("JENKINS-50525")
-    public void testBuildWithCustomWorkspaceVolume() throws Exception {
+    public void testBuildWithCustomHomeVolume() throws Exception {
         PodTemplate template = new PodTemplate();
-        template.setCustomWorkspaceVolumeEnabled(true);
-        template.setWorkspaceVolume(new EmptyDirWorkspaceVolume(false));
+        template.setCustomHomeVolumeEnabled(true);
+        template.setHomeVolume(new EmptyDirHomeVolume(false));
         ContainerTemplate containerTemplate = new ContainerTemplate("name", "image");
-        containerTemplate.setWorkingDir("");
+        containerTemplate.setHomeDir("");
         template.getContainers().add(containerTemplate);
         setupStubs();
         Pod pod = new PodTemplateBuilder(template).withSlave(slave).build();
@@ -138,7 +138,7 @@ public class PodTemplateBuilderTest {
         Container container1 = containers.get(1);
 
         ImmutableList<VolumeMount> volumeMounts = ImmutableList.of(new VolumeMountBuilder()
-                .withMountPath("/home/jenkins").withName("workspace-volume").withReadOnly(false).build());
+                .withMountPath("/home/jenkins").withName("home-volume").withReadOnly(false).build());
 
         assertEquals(volumeMounts, container0.getVolumeMounts());
         assertEquals(volumeMounts, container1.getVolumeMounts());
@@ -196,7 +196,7 @@ public class PodTemplateBuilderTest {
         Map<String, Volume> volumes = pod.getSpec().getVolumes().stream()
                 .collect(Collectors.toMap(Volume::getName, Function.identity()));
         assertEquals(3, volumes.size());
-        assertNotNull(volumes.get("workspace-volume"));
+        assertNotNull(volumes.get("home-volume"));
         if (fromYaml) {
             assertNotNull(volumes.get("empty-volume"));
             assertNotNull(volumes.get("host-volume"));
@@ -207,17 +207,17 @@ public class PodTemplateBuilderTest {
 
         List<VolumeMount> mounts = containers.get("busybox").getVolumeMounts();
         List<VolumeMount> jnlpMounts = containers.get("jnlp").getVolumeMounts();
-        VolumeMount workspaceVolume = new VolumeMountBuilder() //
-                .withMountPath("/home/jenkins").withName("workspace-volume").withReadOnly(false).build();
+        VolumeMount homeVolume = new VolumeMountBuilder() //
+                .withMountPath("/home/jenkins").withName("home-volume").withReadOnly(false).build();
 
         // when using yaml we don't mount all volumes, just the ones explicitly listed
         if (fromYaml) {
-            assertThat(mounts, containsInAnyOrder(workspaceVolume, //
+            assertThat(mounts, containsInAnyOrder(homeVolume, //
                     new VolumeMountBuilder().withMountPath("/container/data").withName("host-volume").build()));
-            assertThat(jnlpMounts, containsInAnyOrder(workspaceVolume));
+            assertThat(jnlpMounts, containsInAnyOrder(homeVolume));
         } else {
             List<Matcher<? super VolumeMount>> volumeMounts = Arrays.asList( //
-                    equalTo(workspaceVolume), //
+                    equalTo(homeVolume), //
                     equalTo(new VolumeMountBuilder() //
                             .withMountPath("/container/data").withName("volume-0").withReadOnly(false).build()),
                     equalTo(new VolumeMountBuilder() //

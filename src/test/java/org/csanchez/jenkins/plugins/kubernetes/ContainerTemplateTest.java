@@ -27,7 +27,7 @@ public class ContainerTemplateTest {
         ContainerTemplate originalTemplate = new ContainerTemplate("myname", "myimage");
         originalTemplate.setPrivileged(true);
         originalTemplate.setAlwaysPullImage(true);
-        originalTemplate.setWorkingDir("some/bogus/dir");
+        originalTemplate.setHomeDir("some/bogus/dir");
         originalTemplate.setCommand("run this");
         originalTemplate.setArgs("args");
         originalTemplate.setTtyEnabled(true);

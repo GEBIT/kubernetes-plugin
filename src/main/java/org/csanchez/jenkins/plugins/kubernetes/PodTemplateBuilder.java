@@ -85,7 +85,7 @@ public class PodTemplateBuilder {
 
     private static final Pattern SPLIT_IN_SPACES = Pattern.compile("([^\"]\\S*|\".+?\")\\s*");
 
-    private static final String WORKSPACE_VOLUME_NAME = "workspace-volume";
+    private static final String HOME_VOLUME_NAME = "home-volume";
 
     private static final String DEFAULT_JNLP_IMAGE = System
             .getProperty(PodTemplateStepExecution.class.getName() + ".defaultImage", "jenkins/jnlp-slave:alpine");
@@ -135,14 +135,14 @@ public class PodTemplateBuilder {
             }
         }
 
-        if (template.getWorkspaceVolume() != null) {
-            LOGGER.log(Level.FINE, "Adding workspace volume from template: {0}",
-                    template.getWorkspaceVolume().toString());
-            volumes.put(WORKSPACE_VOLUME_NAME, template.getWorkspaceVolume().buildVolume(WORKSPACE_VOLUME_NAME));
+        if (template.getHomeVolume() != null) {
+            LOGGER.log(Level.FINE, "Adding home volume from template: {0}",
+                    template.getHomeVolume().toString());
+            volumes.put(HOME_VOLUME_NAME, template.getHomeVolume().buildVolume(HOME_VOLUME_NAME));
         } else {
-            // add an empty volume to share the workspace across the pod
-            LOGGER.log(Level.FINE, "Adding empty workspace volume");
-            volumes.put(WORKSPACE_VOLUME_NAME, new VolumeBuilder().withName(WORKSPACE_VOLUME_NAME).withNewEmptyDir().endEmptyDir().build());
+            // add an empty volume to share the home across the pod
+            LOGGER.log(Level.FINE, "Adding empty home volume");
+            volumes.put(HOME_VOLUME_NAME, new VolumeBuilder().withName(HOME_VOLUME_NAME).withNewEmptyDir().endEmptyDir().build());
         }
 
         Map<String, Container> containers = new HashMap<>();
@@ -220,28 +220,28 @@ public class PodTemplateBuilder {
             jnlp.setImage(DEFAULT_JNLP_IMAGE);
         }
         Map<String, EnvVar> envVars = defaultEnvVars(slave,
-                jnlp.getWorkingDir() != null ? jnlp.getWorkingDir() : ContainerTemplate.DEFAULT_WORKING_DIR,
+                jnlp.getWorkingDir() != null ? jnlp.getWorkingDir() : ContainerTemplate.DEFAULT_HOME_DIR,
                 template.getEnvVars());
         envVars.putAll(jnlp.getEnv().stream().collect(Collectors.toMap(EnvVar::getName, Function.identity())));
         jnlp.setEnv(new ArrayList<>(envVars.values()));
 
-        // default workspace volume, add an empty volume to share the workspace across the pod
-        if (pod.getSpec().getVolumes().stream().noneMatch(v -> WORKSPACE_VOLUME_NAME.equals(v.getName()))) {
+        // default home volume, add an empty volume to share the home across the pod
+        if (pod.getSpec().getVolumes().stream().noneMatch(v -> HOME_VOLUME_NAME.equals(v.getName()))) {
             pod.getSpec().getVolumes()
-                    .add(new VolumeBuilder().withName(WORKSPACE_VOLUME_NAME).withNewEmptyDir().endEmptyDir().build());
+                    .add(new VolumeBuilder().withName(HOME_VOLUME_NAME).withNewEmptyDir().endEmptyDir().build());
         }
-        // default workspace volume mount. If something is already mounted in the same path ignore it
+        // default home volume mount. If something is already mounted in the same path ignore it
         pod.getSpec().getContainers().stream()
                 .filter(c -> c.getVolumeMounts().stream()
                         .noneMatch(vm -> vm.getMountPath().equals(
-                                c.getWorkingDir() != null ? c.getWorkingDir() : ContainerTemplate.DEFAULT_WORKING_DIR)))
+                                c.getWorkingDir() != null ? c.getWorkingDir() : ContainerTemplate.DEFAULT_HOME_DIR)))
                 .forEach(c -> c.getVolumeMounts().add(getDefaultVolumeMount(c.getWorkingDir())));
 
         LOGGER.log(Level.FINE, "Pod built: {0}", pod);
         return pod;
     }
 
-    private Map<String, EnvVar> defaultEnvVars(KubernetesSlave slave, String workingDir,
+    private Map<String, EnvVar> defaultEnvVars(KubernetesSlave slave, String homeDir,
             Collection<TemplateEnvVar> globalEnvVars) {
         // Last-write wins map of environment variable names to values
         HashMap<String, String> env = new HashMap<>();
@@ -291,7 +291,7 @@ public class PodTemplateBuilder {
         // Running on OpenShift Enterprise, security concerns force use of arbitrary user ID
         // As a result, container is running without a home set for user, resulting into using `/` for some tools,
         // and `?` for java build tools. So we force HOME to a safe location.
-        env.put("HOME", workingDir);
+        env.put("HOME", homeDir);
 
         Map<String, EnvVar> envVarsMap = new HashMap<>();
 
@@ -309,7 +309,7 @@ public class PodTemplateBuilder {
 
     private Container createContainer(ContainerTemplate containerTemplate, Collection<TemplateEnvVar> globalEnvVars,
             Collection<VolumeMount> volumeMounts) {
-        Map<String, EnvVar> envVarsMap = defaultEnvVars(slave, containerTemplate.getWorkingDir(), globalEnvVars);
+        Map<String, EnvVar> envVarsMap = defaultEnvVars(slave, containerTemplate.getHomeDir(), globalEnvVars);
 
         if (containerTemplate.getEnvVars() != null) {
             containerTemplate.getEnvVars().forEach(item ->
@@ -332,8 +332,8 @@ public class PodTemplateBuilder {
 
         ContainerPort[] ports = containerTemplate.getPorts().stream().map(entry -> entry.toPort()).toArray(size -> new ContainerPort[size]);
 
-        String workingDir = substituteEnv(containerTemplate.getWorkingDir());
-        List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, workingDir);
+        String homeDir = substituteEnv(containerTemplate.getHomeDir());
+        List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, homeDir);
 
         ContainerLivenessProbe clp = containerTemplate.getLivenessProbe();
         Probe livenessProbe = null;
@@ -355,7 +355,7 @@ public class PodTemplateBuilder {
                 .withNewSecurityContext()
                 .withPrivileged(containerTemplate.isPrivileged())
                 .endSecurityContext()
-                .withWorkingDir(workingDir)
+                .withWorkingDir(homeDir)
                 .withVolumeMounts(containerMounts.toArray(new VolumeMount[containerMounts.size()]))
                 .addToEnv(envVars)
                 .addToPorts(ports)
@@ -370,19 +370,19 @@ public class PodTemplateBuilder {
                 .build();
     }
 
-    private VolumeMount getDefaultVolumeMount(@CheckForNull String workingDir) {
-        String wd = workingDir;
-        if (wd == null) {
-            wd = ContainerTemplate.DEFAULT_WORKING_DIR;
-            LOGGER.log(Level.FINE, "Container workingDir is null, defaulting to {0}", wd);
+    private VolumeMount getDefaultVolumeMount(@CheckForNull String homeDir) {
+        String hd = homeDir;
+        if (hd == null) {
+            hd = ContainerTemplate.DEFAULT_HOME_DIR;
+            LOGGER.log(Level.FINE, "Container homeDir is null, defaulting to {0}", hd);
         }
-        return new VolumeMountBuilder().withMountPath(wd).withName(WORKSPACE_VOLUME_NAME).withReadOnly(false).build();
+        return new VolumeMountBuilder().withMountPath(hd).withName(HOME_VOLUME_NAME).withReadOnly(false).build();
     }
 
-    private List<VolumeMount> getContainerVolumeMounts(Collection<VolumeMount> volumeMounts, String workingDir) {
+    private List<VolumeMount> getContainerVolumeMounts(Collection<VolumeMount> volumeMounts, String homeDir) {
         List<VolumeMount> containerMounts = new ArrayList<>(volumeMounts);
-        if (!Strings.isNullOrEmpty(workingDir) && !PodVolume.volumeMountExists(workingDir, volumeMounts)) {
-            containerMounts.add(getDefaultVolumeMount(workingDir));
+        if (!Strings.isNullOrEmpty(homeDir) && !PodVolume.volumeMountExists(homeDir, volumeMounts)) {
+            containerMounts.add(getDefaultVolumeMount(homeDir));
         }
         return containerMounts;
     }

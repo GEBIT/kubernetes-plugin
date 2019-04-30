@@ -91,10 +91,10 @@
 
     <f:block>
       <table>
-        <f:optionalBlock title="${%Use custom workspace volume}" field="customWorkspaceVolumeEnabled" inline="true">
-          <f:entry title="${%Workspace Volume}" description="${%Volume to use for sharing the workspace}">
-            <f:dropdownDescriptorSelector field="workspaceVolume" oneEach="true" hasHeader="true" addCaption="${%Add Workspace Volume}"
-                                          deleteCaption="${%Delete Workspace Volume}" />
+        <f:optionalBlock title="${%Use custom home volume}" field="customHomeVolumeEnabled" inline="true">
+          <f:entry title="${%Home Volume}" description="${%Volume to use for sharing the home dir}">
+            <f:dropdownDescriptorSelector field="homeVolume" oneEach="true" hasHeader="true" addCaption="${%Add Home Volume}"
+                                          deleteCaption="${%Delete Home Volume}" />
           </f:entry>
         </f:optionalBlock>
       </table>

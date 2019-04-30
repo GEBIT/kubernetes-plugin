@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-package org.csanchez.jenkins.plugins.kubernetes.volumes.workspace;
+package org.csanchez.jenkins.plugins.kubernetes.volumes.home;
 
 import javax.annotation.CheckForNull;
 import javax.annotation.Nonnull;
@@ -35,7 +35,7 @@ import hudson.model.Descriptor;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
 
-public class EmptyDirWorkspaceVolume extends WorkspaceVolume {
+public class EmptyDirHomeVolume extends HomeVolume {
 
     private static final String DEFAULT_MEDIUM = "";
     private static final String MEMORY_MEDIUM = "Memory";
@@ -44,7 +44,7 @@ public class EmptyDirWorkspaceVolume extends WorkspaceVolume {
     private Boolean memory;
 
     @DataBoundConstructor
-    public EmptyDirWorkspaceVolume(Boolean memory) {
+    public EmptyDirHomeVolume(Boolean memory) {
         this.memory = memory;
     }
 
@@ -64,15 +64,15 @@ public class EmptyDirWorkspaceVolume extends WorkspaceVolume {
 
     @Override
     public String toString() {
-        return "EmptyDirWorkspaceVolume [memory=" + memory + "]";
+        return "EmptyDirHomeVolume [memory=" + memory + "]";
     }
 
     @Extension
-    @Symbol("emptyDirWorkspaceVolume")
-    public static class DescriptorImpl extends Descriptor<WorkspaceVolume> {
+    @Symbol("emptyDirHomeVolume")
+    public static class DescriptorImpl extends Descriptor<HomeVolume> {
         @Override
         public String getDisplayName() {
-            return "Empty Dir Workspace Volume";
+            return "Empty Dir Home Volume";
         }
     }
 }

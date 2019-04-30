@@ -2,7 +2,7 @@ pipeline {
   agent {
     kubernetes {
       label 'declarative-custom-workspace-pod'
-      customWorkspace 'some/other/path'
+      customHome 'some/other/path'
       defaultContainer 'maven'
       yaml """
 metadata:
@@ -31,7 +31,7 @@ spec:
     stage('Run maven') {
       steps {
         sh 'mvn -version'
-        sh "echo Workspace dir is ${pwd()}"
+        sh "echo Home dir is ${pwd()}"
       }
     }
   }
