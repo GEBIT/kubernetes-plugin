@@ -125,6 +125,8 @@ public class KubernetesCloud extends Cloud {
     @CheckForNull
     private PodRetention podRetention = PodRetention.getKubernetesCloudDefault();
 
+    private transient KubernetesCloudLimiter limiter = new KubernetesCloudLimiter(this);
+
     @DataBoundConstructor
     public KubernetesCloud(String name) {
         super(name);
@@ -449,13 +451,35 @@ public class KubernetesCloud extends Cloud {
         try {
             Set<String> allInProvisioning = InProvisioning.getAllInProvisioning(label);
             LOGGER.log(Level.FINE, () -> "In provisioning : " + allInProvisioning);
-            int toBeProvisioned = Math.max(0, excessWorkload - allInProvisioning.size());
-            LOGGER.log(Level.INFO, "Excess workload after pending Kubernetes agents: {0}", toBeProvisioned);
 
             List<NodeProvisioner.PlannedNode> r = new ArrayList<NodeProvisioner.PlannedNode>();
+            if (Jenkins.get().isQuietingDown()) {
+                LOGGER.log(Level.FINE, "Jenkins is quieting down, no new nodes will be provisioned");
+                return r;
+            }
+
+            limiter.acquireLock();
+            int numPendingLaunches = limiter.getNumOfPendingLaunchesK8S();
+
+            int allocatableCpu = limiter.getAllocatableCpuMillis();
+            int usedCpu = limiter.getUsedCpuMillis();
+            int availableCpu = Math.max(0, allocatableCpu - usedCpu);
+
+            int podTemplateCpuRequest = limiter.getPodTemplateCpuRequestMillis(label);
+            int currentlySchedulablePods = availableCpu / podTemplateCpuRequest - numPendingLaunches;
+
+            int toBeProvisioned = Math.max(0, Math.min(currentlySchedulablePods, excessWorkload));
+            LOGGER.log(Level.INFO, "compute resources: allocatableCpu: {0}, usedCpu: {1}, availableCpu: {2}", new Object[] {allocatableCpu, usedCpu, availableCpu});
+            LOGGER.log(Level.INFO, "provision request: label: {0}, podTemplateCpuRequest: {1}, currentlySchedulablePods: {2}, numPendingLaunches: {3}, toBeProvisioned: {4}",
+                    new Object[] {label, podTemplateCpuRequest, currentlySchedulablePods, numPendingLaunches, toBeProvisioned});
+
+            if (toBeProvisioned == 0) {
+                //early return to avoid unnecessary computations
+                return r;
+            }
 
             for (PodTemplate t: getTemplatesFor(label)) {
-                LOGGER.log(Level.INFO, "Template for label {0}: {1}", new Object[] { label, t.getDisplayName() });
+                LOGGER.log(Level.FINE, "Template for label {0}: {1}", new Object[] { label, t.getDisplayName() });
                 for (int i = 0; i < toBeProvisioned; i++) {
                     if (!addProvisionedSlave(t, label, i)) {
                         break;
@@ -466,9 +490,10 @@ public class KubernetesCloud extends Cloud {
                         new Object[] { t.getDisplayName(), r.size() });
                 if (r.size() > 0) {
                     // Already found a matching template
-                    return r;
+                    break;
                 }
             }
+            limiter.setNumOfPendingLaunchesK8S(numPendingLaunches + r.size());
             return r;
         } catch (KubernetesClientException e) {
             Throwable cause = e.getCause();
@@ -483,6 +508,14 @@ public class KubernetesCloud extends Cloud {
             LOGGER.log(Level.WARNING, "Failed to connect to Kubernetes at {0}", serverUrl);
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Failed to count the # of live instances on Kubernetes", e);
+        } finally {
+            try {
+                limiter.releaseLock();
+            } catch (UnrecoverableKeyException | CertificateEncodingException | NoSuchAlgorithmException
+                    | KeyStoreException | IOException e) {
+                LOGGER.log(Level.SEVERE, "error releasing lock for global config map", e);
+                throw new IllegalStateException("error releasing lock for global config map", e);
+            }
         }
         return Collections.emptyList();
     }
@@ -508,16 +541,7 @@ public class KubernetesCloud extends Cloud {
         List<Pod> allActiveSlavePods = null;
         // JENKINS-53370 check for nulls
         if (slaveList != null && slaveList.getItems() != null) {
-            allActiveSlavePods = slaveList.getItems().stream() //
-                    .filter(x -> x.getStatus().getPhase().toLowerCase().matches("(running|pending)"))
-                    .collect(Collectors.toList());
-        }
-
-        if (allActiveSlavePods != null && containerCap <= allActiveSlavePods.size() + scheduledCount) {
-            LOGGER.log(Level.INFO,
-                    "Maximum number of concurrently running agent pods ({0}) reached for Kubernetes Cloud {4}, not provisioning: {1} running or pending in namespace {2} with Kubernetes labels {3}",
-                    new Object[] { containerCap, allActiveSlavePods.size() + scheduledCount, templateNamespace, getLabels(), name });
-            return false;
+            allActiveSlavePods = filterActiveAgentPods(slaveList);
         }
 
         Map<String, String> labelsMap = new HashMap<>(this.getLabels());
@@ -526,9 +550,7 @@ public class KubernetesCloud extends Cloud {
         // JENKINS-53370 check for nulls
         List<Pod> activeTemplateSlavePods = null;
         if (templateSlaveList != null && templateSlaveList.getItems() != null) {
-            activeTemplateSlavePods = templateSlaveList.getItems().stream()
-                    .filter(x -> x.getStatus().getPhase().toLowerCase().matches("(running|pending)"))
-                    .collect(Collectors.toList());
+            activeTemplateSlavePods = filterActiveAgentPods(templateSlaveList);
         }
         if (activeTemplateSlavePods != null && allActiveSlavePods != null && template.getInstanceCap() <= activeTemplateSlavePods.size() + scheduledCount) {
             LOGGER.log(Level.INFO,
@@ -538,6 +560,14 @@ public class KubernetesCloud extends Cloud {
             return false;
         }
         return true;
+    }
+
+    public static List<Pod> filterActiveAgentPods(PodList slaveList) {
+        List<Pod> allActiveSlavePods;
+        allActiveSlavePods = slaveList.getItems().stream()
+            .filter(x -> x.getStatus().getPhase().toLowerCase().matches("(running|pending)"))
+            .collect(Collectors.toList());
+        return allActiveSlavePods;
     }
 
     @Override
@@ -615,6 +645,15 @@ public class KubernetesCloud extends Cloud {
      */
     public void removeDynamicTemplate(PodTemplate t) {
         PodTemplateMap.get().removeTemplate(this, t);
+    }
+
+    public KubernetesCloudLimiter getLimiter() {
+        return limiter;
+    }
+
+    //package-private for testing
+    void setLimiter(KubernetesCloudLimiter limiter) {
+        this.limiter = limiter;
     }
 
     @Override
@@ -774,6 +813,9 @@ public class KubernetesCloud extends Cloud {
         }
         if (podRetention == null) {
             podRetention = PodRetention.getKubernetesCloudDefault();
+        }
+        if (limiter == null) {
+            limiter = new KubernetesCloudLimiter(this);
         }
         if (waitForPodSec == null) {
             waitForPodSec = DEFAULT_WAIT_FOR_POD_SEC;

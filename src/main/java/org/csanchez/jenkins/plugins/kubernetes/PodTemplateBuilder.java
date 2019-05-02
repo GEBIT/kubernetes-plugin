@@ -67,6 +67,7 @@ import io.fabric8.kubernetes.api.model.PodFluent.SpecNested;
 import io.fabric8.kubernetes.api.model.Probe;
 import io.fabric8.kubernetes.api.model.ProbeBuilder;
 import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.SecurityContextBuilder;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
 import io.fabric8.kubernetes.api.model.VolumeMount;
@@ -85,7 +86,7 @@ public class PodTemplateBuilder {
 
     private static final Pattern SPLIT_IN_SPACES = Pattern.compile("([^\"]\\S*|\".+?\")\\s*");
 
-    private static final String HOME_VOLUME_NAME = "home-volume";
+    public static final String HOME_VOLUME_NAME = "home-volume";
 
     private static final String DEFAULT_JNLP_IMAGE = System
             .getProperty(PodTemplateStepExecution.class.getName() + ".defaultImage", "jenkins/jnlp-slave:alpine");
@@ -224,6 +225,14 @@ public class PodTemplateBuilder {
                 template.getEnvVars());
         envVars.putAll(jnlp.getEnv().stream().collect(Collectors.toMap(EnvVar::getName, Function.identity())));
         jnlp.setEnv(new ArrayList<>(envVars.values()));
+
+        // allow the jnlp container to read and send signals to shared processes
+        pod.getSpec().setShareProcessNamespace(true);
+        jnlp.setSecurityContext(new SecurityContextBuilder().
+                withNewCapabilities().
+                    addToAdd("SYS_PTRACE").
+                endCapabilities().
+            build());
 
         // default home volume, add an empty volume to share the home across the pod
         if (pod.getSpec().getVolumes().stream().noneMatch(v -> HOME_VOLUME_NAME.equals(v.getName()))) {
