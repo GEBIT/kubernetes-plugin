@@ -112,6 +112,11 @@
       <version>${pipeline-model-definition.version}</version>
       <optional>true</optional>
     </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-cps</artifactId>
+      <version>2.61.1</version>
+    </dependency>
 
     <!-- for testing -->
     <dependency>
@@ -174,12 +179,6 @@
       <groupId>org.jenkins-ci.plugins.workflow</groupId>
       <artifactId>workflow-api</artifactId>
       <version>2.33</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.jenkins-ci.plugins.workflow</groupId>
-      <artifactId>workflow-cps</artifactId>
-      <version>2.61.1</version>
       <scope>test</scope>
     </dependency>
     <dependency>

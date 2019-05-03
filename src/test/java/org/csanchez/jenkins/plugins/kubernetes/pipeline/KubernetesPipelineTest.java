@@ -117,7 +117,6 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
             }
         }
         assertTrue(foundBuildUrl);
-        assertEquals(Integer.MAX_VALUE, template.getInstanceCap());
         assertThat(template.getLabelsMap(), hasEntry("jenkins/" + name.getMethodName(), "true"));
 
         Pod pod = pods.getItems().get(0);
@@ -136,7 +135,6 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
         SemaphoreStep.waitForStart("podTemplate1/1", b);
         PodTemplate template1 = podTemplatesWithLabel("mypod", cloud.getAllTemplates()).get(0);
         SemaphoreStep.success("podTemplate1/1", null);
-        assertEquals(Integer.MAX_VALUE, template1.getInstanceCap());
         assertThat(template1.getLabelsMap(), hasEntry("jenkins/mypod", "true"));
         SemaphoreStep.waitForStart("pod1/1", b);
         Map<String, String> labels1 = getLabels(cloud, this, name);
@@ -148,7 +146,6 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
         SemaphoreStep.waitForStart("podTemplate2/1", b);
         PodTemplate template2 = podTemplatesWithLabel("mypod2", cloud.getAllTemplates()).get(0);
         SemaphoreStep.success("podTemplate2/1", null);
-        assertEquals(Integer.MAX_VALUE, template2.getInstanceCap());
         assertThat(template2.getLabelsMap(), hasEntry("jenkins/mypod2", "true"));
         assertNull("mypod2 should not inherit from anything", template2.getInheritFrom());
         SemaphoreStep.waitForStart("pod2/1", b);
@@ -177,7 +174,6 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
         }
         assertFalse(templates.isEmpty());
         PodTemplate template = templates.get(0);
-        assertEquals(Integer.MAX_VALUE, template.getInstanceCap());
         r.assertBuildStatusSuccess(r.waitForCompletion(b));
         r.assertLogContains("script file contents: ", b);
         assertFalse("There are pods leftover after test execution, see previous logs",

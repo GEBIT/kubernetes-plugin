@@ -348,9 +348,6 @@ public class PodTemplateUtils {
         podTemplate.setInheritFrom(!Strings.isNullOrEmpty(template.getInheritFrom()) ?
                                    template.getInheritFrom() : parent.getInheritFrom());
 
-        podTemplate.setInstanceCap(template.getInstanceCap() != Integer.MAX_VALUE ?
-                                   template.getInstanceCap() : parent.getInstanceCap());
-
         podTemplate.setSlaveConnectTimeout(template.getSlaveConnectTimeout() != PodTemplate.DEFAULT_SLAVE_JENKINS_CONNECTION_TIMEOUT ?
                                            template.getSlaveConnectTimeout() : parent.getSlaveConnectTimeout());
 

@@ -35,18 +35,17 @@ public class KubernetesCloudLimiter {
 
     private static final Logger LOGGER = Logger.getLogger(KubernetesCloudLimiter.class.getName());
 
-    private static final String COMPUTE_LABEL_VALUE = "general";
-    private static final String COMPUTE_LABEL_NAME = "compute";
-    private static final String GLOBAL_CONFIG_MAP_NAME = "default";
-    private static final String LOCKED = "locked";
-    private static final String GLOBAL_NAMESPACE = "jenkins-masters";
-    private static final String NUM_PENDING_LAUNCHES = "numPendingLaunches";
-    private static final long MAX_ĹOCK_TIME_MS = 60 * 1000;
-    private static final int MAX_TRIES = 5;
+    // package-private for testing
+    static final String COMPUTE_LABEL_VALUE = "general";
+    static final String COMPUTE_LABEL_NAME = "compute";
+    static final String GLOBAL_CONFIG_MAP_NAME = "default";
+    static final String LOCKED = "locked";
+    static final String GLOBAL_NAMESPACE = "jenkins-masters";
+    static final String NUM_PENDING_LAUNCHES = "numPendingLaunches";
+    static final long MAX_ĹOCK_TIME_MS = 60 * 1000;
+    static final int MAX_TRIES = 5;
 
-    private KubernetesCloud cloud;
-
-    private long lastSuccessfulLock;
+    private transient KubernetesCloud cloud;
 
     public KubernetesCloudLimiter(KubernetesCloud cloud) {
         this.cloud = cloud;
@@ -96,11 +95,8 @@ public class KubernetesCloudLimiter {
     private boolean acquireLock(boolean force) throws InterruptedException, UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
         checkGlobalConfigMap();
 
-        if (lastSuccessfulLock == 0) {
-            //first try to acquire the lock, init lastSuccessfulLock, so we dont force from the start
-            lastSuccessfulLock = System.currentTimeMillis();
-        }
         int numTries = 0;
+        boolean locked = true;
         while (numTries < MAX_TRIES) {
             //get the global config map
             ConfigMap cm = getGlobalConfigMap();
@@ -108,21 +104,20 @@ public class KubernetesCloudLimiter {
                 LOGGER.log(Level.SEVERE, "global config map does not exist");
                 return false;
             }
-            boolean locked = Boolean.parseBoolean(cm.getData().get(LOCKED));
+            locked = Boolean.parseBoolean(cm.getData().get(LOCKED));
             if (locked && !force) {
                 //wait a second, then try again
                 Thread.sleep(1000);
-                if ((System.currentTimeMillis() - lastSuccessfulLock) > MAX_ĹOCK_TIME_MS) {
-                    //lock was held for too long, force it open
-                    acquireLock(true);
-                }
             } else {
                 //we lock for us now
                 findGlobalConfigMap().edit().addToData(LOCKED, "true").done();
-                lastSuccessfulLock = System.currentTimeMillis();
                 return true;
             }
             numTries++;
+        }
+        if (locked) {
+            // if its still locked after MAX_RETRIES, force it
+            return acquireLock(true);
         }
         LOGGER.log(Level.SEVERE, "number of max tries reached to acquire lock for global config map");
         return false;

@@ -43,10 +43,6 @@
         <f:textbox default="15"/>
     </f:entry>
 
-    <f:entry title="${%Concurrency Limit}" field="containerCapStr">
-        <f:textbox default="10"/>
-    </f:entry>
-
     <f:dropdownDescriptorSelector title="${%Pod Retention}" field="podRetention" 
         descriptors="${descriptor.allowedPodRetentions}" default="${descriptor.defaultPodRetention}" /> 
 
