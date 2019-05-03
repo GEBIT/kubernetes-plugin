@@ -122,7 +122,7 @@ public class KubernetesCloudLimiterTest {
         return result;
     }
     
-    public static Pod createTestPod(String name, String cpuReq, String cpuLim, String phase) {
+    public static Pod createTestPod(String name, String cpuReq, String cpuLim, String phase, String jobName) {
         Map<String, Quantity> cpuRequest = createCpuQuantity(cpuReq);
         Map<String, Quantity> cpuLimit = createCpuQuantity(cpuLim);
 
@@ -136,6 +136,7 @@ public class KubernetesCloudLimiterTest {
 
         Map<String, String> labels = new HashMap<>();
         labels.put("jenkins", "slave");
+        labels.put(KubernetesLauncher.JOB_NAME_LABEL, jobName);
 
         Pod pod = new PodBuilder().
                 withNewMetadata().
@@ -157,13 +158,13 @@ public class KubernetesCloudLimiterTest {
         List<Pod> result = new ArrayList<>();
 
         // must contribute to used cpu
-        result.add(createTestPod("running-slave-1", "1", "2", "running"));
+        result.add(createTestPod("running-slave-1", "1", "2", "running", "cloud-project"));
         // must contribute to used cpu
-        result.add(createTestPod("running-slave-2", "2", "4", "running"));
+        result.add(createTestPod("running-slave-2", "2", "4", "running", "non-cloud-project"));
         // must contribute to used cpu
-        result.add(createTestPod("pending-slave-2", "3", "6", "pending"));
+        result.add(createTestPod("pending-slave-2", "3", "6", "pending", "cloud-project"));
         // must NOT contribute to used cpu
-        result.add(createTestPod("completed-slave-1", "2", "4", "completed"));
+        result.add(createTestPod("completed-slave-1", "2", "4", "completed", "cloud-project"));
 
         return result;
     }

@@ -181,8 +181,6 @@ public class KubernetesCloudTest {
 
         // now try to provision another agent
         // because there is no more capacity, it should be denied (pending launches count)
-        // but the number of pending launches is still 1, because the pending node has not been launched by the
-        // KubernetesLauncher until now
         cm.getData().put(KubernetesCloudLimiter.NUM_PENDING_LAUNCHES, "1");
         plannedNodes = cloud.provision(Label.get("test"), 10);
         assertEquals("The number of planned nodes is wrong", 0, plannedNodes.size());

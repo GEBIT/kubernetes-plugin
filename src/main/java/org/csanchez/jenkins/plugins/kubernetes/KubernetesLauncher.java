@@ -75,7 +75,7 @@ public class KubernetesLauncher extends JNLPLauncher {
 
     private static final Logger LOGGER = Logger.getLogger(KubernetesLauncher.class.getName());
 
-    private static final String JOB_NAME_LABEL = "job-name";
+    static final String JOB_NAME_LABEL = "job-name";
     private static final String DEFAULT_STORAGE_CLASS = "openebs-standalone";
     private static final String OPENEBS_IO_TARGET_AFFINITY = "openebs.io/target-affinity";
     private static final String DEFAULT_ACCESS_MODE = "ReadWriteOnce";
@@ -218,7 +218,7 @@ public class KubernetesLauncher extends JNLPLauncher {
         return watcher;
     }
 
-    private BuildableItem findFirstBuildableToProvisionFor(List<BuildableItem> buildables, String namespace,
+    BuildableItem findFirstBuildableToProvisionFor(List<BuildableItem> buildables, String namespace,
             String templateLabel, KubernetesClient client) {
 
         Set<LabelAtom> templateLabelSet = Label.parse(templateLabel);
@@ -249,7 +249,7 @@ public class KubernetesLauncher extends JNLPLauncher {
         return null;
     }
 
-    private String adjustPodToBuildable(Pod pod, BuildableItem buildable, String namespace) {
+    String adjustPodToBuildable(Pod pod, BuildableItem buildable, String namespace) {
         String buildableName = buildable.task.getDisplayName();
         String fullBuildableName = buildable.task.getUrl().replace("job/", "");
         LOGGER.log(INFO, "buildableName : {0}, fullBuildableName: {1}", new Object[] {buildableName, fullBuildableName});
@@ -283,7 +283,7 @@ public class KubernetesLauncher extends JNLPLauncher {
         return prefix + "-" + Integer.toHexString(buildableName.hashCode());
     }
 
-    private void adjustWorkspaceVolume(Pod pod, String hashedVolumeName, String namespace) {
+    void adjustWorkspaceVolume(Pod pod, String hashedVolumeName, String namespace) {
         // find the HostPath workspace volume
         HostPathVolumeSource hostPath = findWorkspaceVolumeSource(pod);
         if (hostPath != null) {
@@ -295,7 +295,7 @@ public class KubernetesLauncher extends JNLPLauncher {
         }
     }
     
-    private void adjustHomeClaim(Pod pod, String pvcName) {
+    void adjustHomeClaim(Pod pod, String pvcName) {
         // adjust pvc name
         Volume homeVolume = findHomeVolume(pod.getSpec().getVolumes());
         if (homeVolume != null) {
@@ -310,7 +310,7 @@ public class KubernetesLauncher extends JNLPLauncher {
         pod.getMetadata().getLabels().put(OPENEBS_IO_TARGET_AFFINITY, pvcName);
     }
 
-    private Container findJnlpContainer(List<Container> containers) {
+    Container findJnlpContainer(List<Container> containers) {
         for (Container c : containers) {
             if (c.getName().equals(KubernetesCloud.JNLP_NAME)) {
                 return c;
@@ -319,7 +319,7 @@ public class KubernetesLauncher extends JNLPLauncher {
         return null;
     }
 
-    private Volume findHomeVolume(List<Volume> volumes) {
+    Volume findHomeVolume(List<Volume> volumes) {
         for (Volume v : volumes) {
             if (v.getName().equals(PodTemplateBuilder.HOME_VOLUME_NAME)) {
                 return v;
@@ -328,7 +328,7 @@ public class KubernetesLauncher extends JNLPLauncher {
         return null;
     }
 
-    private HostPathVolumeSource findWorkspaceVolumeSource(Pod pod) {
+    HostPathVolumeSource findWorkspaceVolumeSource(Pod pod) {
         List<Volume> volumes = pod.getSpec().getVolumes();
         for (Volume vol : volumes) {
             HostPathVolumeSource hostPath = vol.getHostPath();
@@ -340,7 +340,7 @@ public class KubernetesLauncher extends JNLPLauncher {
         return null;
     }
 
-    private void claimHomeVolume(String pvcName, String buildableName, String namespace, int sizeGB,
+    void claimHomeVolume(String pvcName, String buildableName, String namespace, int sizeGB,
         KubernetesClient client) throws IOException {
 
         LOGGER.log(FINE, "checking volume in kubernetes: {0}", pvcName);
@@ -381,7 +381,7 @@ public class KubernetesLauncher extends JNLPLauncher {
             .withStorageClassName(DEFAULT_STORAGE_CLASS)
             .endSpec()
             .done();
-        
+
         LOGGER.log(Level.FINE, "claimed home pvc: {0}", pvcName);
     }
 
