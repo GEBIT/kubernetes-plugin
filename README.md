@@ -1,3 +1,9 @@
+**THIS BRANCH IS DEPRECATED**
+
+
+**PLEASE USE THE NEW [gebit](https://github.com/GEBIT/kubernetes-plugin/tree/gebit) BRANCH FOR SNAPSHOTS AND RELEASES**
+
+
 jenkins-kubernetes-plugin
 =========================
 
