@@ -161,14 +161,14 @@ public class KubernetesCloudTest {
             @Override
             public List<PodTemplate> getTemplatesFor(Label label) {
                 List<PodTemplate> result = new ArrayList<>();
-                result.add(KubernetesCloudLimiterTest.createTestPodTemplate());
+                result.add(KubernetesCloudLimiterTest.createTestPodTemplate("1000m", "4"));
                 return result;
             }
 
             // mock the template for the label
             @Override
             public PodTemplate getTemplate(Label label) {
-                return KubernetesCloudLimiterTest.createTestPodTemplate();
+                return KubernetesCloudLimiterTest.createTestPodTemplate("1000m", "4");
             }
         };
 

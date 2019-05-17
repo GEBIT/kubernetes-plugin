@@ -434,18 +434,11 @@ public class KubernetesCloud extends Cloud {
 
             limiter.acquireLock();
             int numPendingLaunches = limiter.getNumOfPendingLaunchesK8S();
-
-            int allocatableCpu = limiter.getAllocatableCpuMillis();
-            int usedCpu = limiter.getUsedCpuMillis();
-            int availableCpu = Math.max(0, allocatableCpu - usedCpu);
-
-            int podTemplateCpuRequest = limiter.getPodTemplateCpuRequestMillis(label);
-            int currentlySchedulablePods = availableCpu / podTemplateCpuRequest - numPendingLaunches;
+            int currentlySchedulablePods = limiter.getNumSchedulablePods(label) - numPendingLaunches;
 
             int toBeProvisioned = Math.max(0, Math.min(currentlySchedulablePods, excessWorkload));
-            LOGGER.log(Level.INFO, "compute resources: allocatableCpu: {0}, usedCpu: {1}, availableCpu: {2}", new Object[] {allocatableCpu, usedCpu, availableCpu});
-            LOGGER.log(Level.INFO, "provision request: label: {0}, podTemplateCpuRequest: {1}, currentlySchedulablePods: {2}, numPendingLaunches: {3}, toBeProvisioned: {4}",
-                    new Object[] {label, podTemplateCpuRequest, currentlySchedulablePods, numPendingLaunches, toBeProvisioned});
+            LOGGER.log(Level.INFO, "provision request: label: {0}, currentlySchedulablePods: {1}, numPendingLaunches: {2}, toBeProvisioned: {3}",
+                    new Object[] {label, currentlySchedulablePods, numPendingLaunches, toBeProvisioned});
 
             if (toBeProvisioned == 0) {
                 //early return to avoid unnecessary computations

@@ -87,7 +87,7 @@ public class KubernetesCloudLimiter {
               done();
         }
     }
-    
+
     public boolean acquireLock() throws InterruptedException, UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
         return acquireLock(false);
     }
@@ -145,6 +145,11 @@ public class KubernetesCloudLimiter {
     public void setNumOfPendingLaunchesK8S(int numPendingLaunches) throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
         checkGlobalConfigMap();
 
+        // while developing, a jenkins-master can get "force undeployed" before all of it's provisionings and jobs are
+        // finished. This can lead to numPendingLaunches of less than 0. Guard against this.
+        if (numPendingLaunches < 0) {
+            numPendingLaunches = 0;
+        }
         findGlobalConfigMap().edit().addToData(NUM_PENDING_LAUNCHES, Integer.toString(numPendingLaunches)).done();
         LOGGER.log(Level.FINE, "set numPendingLaunches to: {0}", numPendingLaunches);
     }
@@ -165,48 +170,25 @@ public class KubernetesCloudLimiter {
         return false;
     }
 
-    public int getAllocatableCpuMillis() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
-        List<Node> nodes = cloud.connect().nodes().withLabel(COMPUTE_LABEL_NAME, COMPUTE_LABEL_VALUE).list().getItems();
+    public int getNumSchedulablePods(Label label) throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        // how much the template requests 
+        int cpuRequest = getPodTemplateCpuRequestMillis(label);
+        // how much is allocatable (maximum capacity) per node
+        Map<String, Integer> allocatableCpu = getAllocatableCpuMillisByNode();
+        // how much is used per node
+        Map<String, Integer> usedCpu = getUsedCpuMillisByNode();
+        // how much is available per node (difference of allocatable and used)
+        Map<String, Integer> availableCpu = calcAvailableCpuMillis(allocatableCpu, usedCpu);
 
-        int totalAllocatableCpuMillis = 0;
-
-        for (Node node : nodes) {
-            if (isNodeReady(node)) {
-                Quantity cpuAlloc = node.getStatus().getAllocatable().get("cpu");
-                LOGGER.log(Level.FINE, "node {0} has cpu allocatable {1}", new Object[] {node.getMetadata().getName(), cpuAlloc});
-
-                totalAllocatableCpuMillis += Integer.parseInt(cpuAlloc.getAmount()) * 1000;
-            }
+        int result = 0;
+        for (Integer availableCpuOnOneNode : availableCpu.values()) {
+            // count the number of times the requests would fit on each node
+            result += availableCpuOnOneNode / cpuRequest;
         }
-
-        return totalAllocatableCpuMillis;
+        return result;
     }
 
-    public int getUsedCpuMillis() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
-        List<Pod> activeAgentPods = KubernetesCloud.filterActiveAgentPods(cloud.connect().pods().inAnyNamespace().withLabel("jenkins", "slave").list());
-        LOGGER.log(Level.FINE, "number of active agent pods: {0}", activeAgentPods.size());
-
-        int totalUsedCpuMillis = 0;
-
-        for (Pod agentPod : activeAgentPods) {
-            List<Container> containers = agentPod.getSpec().getContainers();
-            for (Container container : containers) {
-                Map<String, Quantity> requests = container.getResources().getRequests();
-                if (requests != null) {
-                    Quantity cpuQuantity = requests.get("cpu");
-                    if (cpuQuantity != null) {
-                        String cpuRequest = cpuQuantity.getAmount();
-                        totalUsedCpuMillis += calcQuantityMillis(cpuRequest);
-                    }
-                }
-                LOGGER.log(Level.FINE, "container {0} in pod {1} has requests {2} ", new Object[] {container.getName(), agentPod.getMetadata().getName(), requests});
-            }
-        }
-
-        return totalUsedCpuMillis;
-    }
-
-    public int getPodTemplateCpuRequestMillis(Label label) {
+    int getPodTemplateCpuRequestMillis(Label label) {
         int podTemplateCpuRequestMillis = 0;
 
         PodTemplate podTemplate = cloud.getTemplate(label);
@@ -216,6 +198,75 @@ public class KubernetesCloudLimiter {
         }
 
         return podTemplateCpuRequestMillis;
+    }
+
+    private Map<String, Integer> calcAvailableCpuMillis(Map<String, Integer> allocatable, Map<String, Integer> used) {
+        Map<String, Integer> result = new HashMap<>();
+
+        // calculate the difference of allocatable to used for each node
+        for (String nodeName : allocatable.keySet()) {
+            Integer allocMillis = allocatable.get(nodeName);
+            Integer usedMillis = used.get(nodeName);
+            if (usedMillis == null) {
+                // no pod is using this node
+                usedMillis = 0;
+            }
+            result.put(nodeName, allocMillis - usedMillis);
+        }
+        return result;
+    }
+
+    Map<String, Integer> getAllocatableCpuMillisByNode() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        Map<String, Integer> result = new HashMap<>();
+
+        List<Node> nodes = cloud.connect().nodes().withLabel(COMPUTE_LABEL_NAME, COMPUTE_LABEL_VALUE).list().getItems();
+
+        for (Node node : nodes) {
+            if (isNodeReady(node)) {
+                Quantity cpuAlloc = node.getStatus().getAllocatable().get("cpu");
+                LOGGER.log(Level.FINE, "node {0} has cpu allocatable {1}", new Object[] {node.getMetadata().getName(), cpuAlloc});
+                result.put(node.getMetadata().getName(), calcQuantityMillis(cpuAlloc.getAmount()));
+            }
+        }
+
+        return result;
+    }
+
+    Map<String, Integer> getUsedCpuMillisByNode() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        Map<String, Integer> result = new HashMap<>();
+
+        List<Pod> activeAgentPods = KubernetesCloud.filterActiveAgentPods(cloud.connect().pods().inAnyNamespace().withLabel("jenkins", "slave").list());
+        LOGGER.log(Level.FINE, "number of active agent pods: {0}", activeAgentPods.size());
+
+        for (Pod agentPod : activeAgentPods) {
+            int podUsedCpuMillis = 0;
+
+            List<Container> containers = agentPod.getSpec().getContainers();
+            for (Container container : containers) {
+                Map<String, Quantity> requests = container.getResources().getRequests();
+                if (requests != null) {
+                    Quantity cpuQuantity = requests.get("cpu");
+                    if (cpuQuantity != null) {
+                        String cpuRequest = cpuQuantity.getAmount();
+                        podUsedCpuMillis += calcQuantityMillis(cpuRequest);
+                    }
+                }
+                LOGGER.log(Level.FINE, "container {0} in pod {1} has requests {2} ", new Object[] {container.getName(), agentPod.getMetadata().getName(), requests});
+            }
+            addCpuMillis(result, agentPod.getSpec().getNodeName(), podUsedCpuMillis);
+        }
+
+        return result;
+    }
+
+    private void addCpuMillis(Map<String, Integer> cpuMillis, String nodeName, int podUsedCpuMillis) {
+        Integer used = cpuMillis.get(nodeName);
+        if (used != null) {
+            used += podUsedCpuMillis;
+        } else {
+            used = podUsedCpuMillis;
+        }
+        cpuMillis.put(nodeName, used);
     }
 
     private int calcQuantityMillis(String quantity) {

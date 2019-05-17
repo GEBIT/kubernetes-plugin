@@ -1,6 +1,8 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
+import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThat;
 
 import java.io.IOException;
 import java.security.KeyStoreException;
@@ -15,6 +17,7 @@ import java.util.Map;
 import org.junit.Test;
 import org.mockito.Mockito;
 
+import antlr.ANTLRException;
 import hudson.model.Label;
 import hudson.model.labels.LabelAtom;
 import io.fabric8.kubernetes.api.model.ConfigMap;
@@ -69,7 +72,7 @@ public class KubernetesCloudLimiterTest {
                     withNewUnschedulable(true).
                 endSpec().
                 withNewStatus().
-                    withAllocatable(createCpuQuantity("1")).
+                    withAllocatable(createCpuQuantity("10")).
                 endStatus().
                 build();
         result.add(unschedulableNode);
@@ -84,12 +87,12 @@ public class KubernetesCloudLimiterTest {
                 endSpec().
                 withNewStatus().
                     withConditions(new NodeCondition("00:00:00", "00:00:00", "message", "reason", "false", "Ready")).
-                    withAllocatable(createCpuQuantity("1")).
+                    withAllocatable(createCpuQuantity("10")).
                 endStatus().
                 build();
         result.add(nonReadyNode);
 
-        // must contribute to total allocatable
+        // small node with 2 cpus only
         Node smallReadyNode = new NodeBuilder().
                 withNewMetadata().
                     withName("small-ready-node").
@@ -104,10 +107,25 @@ public class KubernetesCloudLimiterTest {
                 build();
         result.add(smallReadyNode);
 
-        // must contribute to total allocatable
-        Node bigReadyNode = new NodeBuilder().
+        // medium node with 5 cpus
+        Node mediumReadyNode = new NodeBuilder().
                 withNewMetadata().
-                    withName("big-ready-node").
+                    withName("medium-ready-node").
+                endMetadata().
+                withNewSpec().
+                    withNewUnschedulable(false).
+                endSpec().
+                withNewStatus().
+                    withConditions(new NodeCondition("00:00:00", "00:00:00", "message", "reason", "true", "Ready")).
+                    withAllocatable(createCpuQuantity("5")).
+                endStatus().
+                build();
+        result.add(mediumReadyNode);
+
+        // large node with 10 cpus
+        Node largeReadyNode = new NodeBuilder().
+                withNewMetadata().
+                    withName("large-ready-node").
                 endMetadata().
                 withNewSpec().
                     withNewUnschedulable(false).
@@ -117,12 +135,12 @@ public class KubernetesCloudLimiterTest {
                     withAllocatable(createCpuQuantity("10")).
                 endStatus().
                 build();
-        result.add(bigReadyNode);
+        result.add(largeReadyNode);
 
         return result;
     }
     
-    public static Pod createTestPod(String name, String cpuReq, String cpuLim, String phase, String jobName) {
+    public static Pod createTestPod(String name, String nodeName, String cpuReq, String cpuLim, String phase, String jobName) {
         Map<String, Quantity> cpuRequest = createCpuQuantity(cpuReq);
         Map<String, Quantity> cpuLimit = createCpuQuantity(cpuLim);
 
@@ -145,6 +163,7 @@ public class KubernetesCloudLimiterTest {
                 endMetadata().
                 withNewSpec().
                     withContainers(container).
+                    withNodeName(nodeName).
                 endSpec().
                 withNewStatus().
                     withPhase(phase).
@@ -158,22 +177,24 @@ public class KubernetesCloudLimiterTest {
         List<Pod> result = new ArrayList<>();
 
         // must contribute to used cpu
-        result.add(createTestPod("running-slave-1", "1", "2", "running", "cloud-project"));
+        result.add(createTestPod("running-slave-1", "small-ready-node", "1", "2", "running", "cloud-project"));
         // must contribute to used cpu
-        result.add(createTestPod("running-slave-2", "2", "4", "running", "non-cloud-project"));
+        result.add(createTestPod("running-slave-2", "medium-ready-node", "2", "4", "running", "non-cloud-project"));
         // must contribute to used cpu
-        result.add(createTestPod("pending-slave-2", "3", "6", "pending", "cloud-project"));
+        result.add(createTestPod("running-slave-3", "large-ready-node", "1", "2", "running", "cloud-project"));
+        // must contribute to used cpu
+        result.add(createTestPod("pending-slave-1", "large-ready-node", "3", "6", "pending", "cloud-project"));
         // must NOT contribute to used cpu
-        result.add(createTestPod("completed-slave-1", "2", "4", "completed", "cloud-project"));
+        result.add(createTestPod("completed-slave-1", "small-ready-node", "2", "4", "completed", "cloud-project"));
 
         return result;
     }
 
-    public static PodTemplate createTestPodTemplate() {
+    public static PodTemplate createTestPodTemplate(String container1Req, String container2Req) {
         ContainerTemplate milliCpuReqTemplate = new ContainerTemplate("container1", "image1:1");
-        milliCpuReqTemplate.setResourceRequestCpu("1000m");
+        milliCpuReqTemplate.setResourceRequestCpu(container1Req);
         ContainerTemplate fullCpuReqTemplate = new ContainerTemplate("container2", "image1:1");
-        fullCpuReqTemplate.setResourceRequestCpu("4");
+        fullCpuReqTemplate.setResourceRequestCpu(container2Req);
 
         List<ContainerTemplate> containers = new ArrayList<>();
         containers.add(milliCpuReqTemplate);
@@ -328,7 +349,7 @@ public class KubernetesCloudLimiterTest {
     }
 
     @Test
-    public void testGetAllocatableCpuMillis() throws IOException, UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, InterruptedException {
+    public void testGetAllocatableCpuMillisByNode() throws IOException, UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, InterruptedException {
         KubernetesCloud cloud = new KubernetesCloud("name") {
             @Override
             public KubernetesClient connect() throws UnrecoverableKeyException, NoSuchAlgorithmException, KeyStoreException, IOException, CertificateEncodingException {
@@ -346,11 +367,17 @@ public class KubernetesCloudLimiterTest {
         };
 
         KubernetesCloudLimiter limiter = cloud.getLimiter();
-        assertEquals("Amount of allocatable cpu is wrong", 12000, limiter.getAllocatableCpuMillis());
+        Map<String, Integer> actual = limiter.getAllocatableCpuMillisByNode();
+        Map<String, Integer> expected = new HashMap<>();
+        expected.put("small-ready-node", 2000);
+        expected.put("medium-ready-node", 5000);
+        expected.put("large-ready-node", 10000);
+
+        assertThat("Amount of allocatable cpu is wrong", actual, is(expected));
     }
 
     @Test
-    public void testGetUsedCpuMillis() throws IOException, UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, InterruptedException {
+    public void testGetUsedCpuMillisByNode() throws IOException, UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, InterruptedException {
         KubernetesCloud cloud = new KubernetesCloud("name") {
             @Override
             public KubernetesClient connect() throws UnrecoverableKeyException, NoSuchAlgorithmException, KeyStoreException, IOException, CertificateEncodingException {
@@ -370,7 +397,69 @@ public class KubernetesCloudLimiterTest {
         };
 
         KubernetesCloudLimiter limiter = cloud.getLimiter();
-        assertEquals("Amount of used cpu is wrong", 6000, limiter.getUsedCpuMillis());
+        Map<String, Integer> actual = limiter.getUsedCpuMillisByNode();
+        Map<String, Integer> expected = new HashMap<>();
+        expected.put("small-ready-node", 1000);
+        expected.put("medium-ready-node", 2000);
+        expected.put("large-ready-node", 4000);
+
+        assertThat("Amount of used cpu is wrong", actual, is(expected));
+    }
+
+    @Test
+    public void testGetNumSchedulablePods() throws IOException, UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, InterruptedException, ANTLRException {
+        Label smallRequest = new LabelAtom("small-request");
+        Label largeRequest = new LabelAtom("large-request");
+
+        KubernetesCloud cloud = new KubernetesCloud("name") {
+            @Override
+            public KubernetesClient connect() throws UnrecoverableKeyException, NoSuchAlgorithmException, KeyStoreException, IOException, CertificateEncodingException {
+              KubernetesClient mockClient =  Mockito.mock(KubernetesClient.class);
+
+              MixedOperation<Pod, PodList, DoneablePod, PodResource<Pod, DoneablePod>> operation = Mockito.mock(MixedOperation.class);
+
+              Mockito.when(operation.inAnyNamespace()).thenReturn(operation);
+              Mockito.when(operation.withLabel("jenkins", "slave")).thenReturn(operation);
+              PodList podList = Mockito.mock(PodList.class);
+              Mockito.when(podList.getItems()).thenReturn(createPodList());
+              Mockito.when(operation.list()).thenReturn(podList);
+              Mockito.when(mockClient.pods()).thenReturn(operation);
+
+              NonNamespaceOperation<Node, NodeList, DoneableNode, Resource<Node, DoneableNode>> nodeOperation = Mockito.mock(MixedOperation.class);
+              Mockito.when(nodeOperation.withLabel(Mockito.anyString(), Mockito.anyString())).thenReturn(nodeOperation);
+
+              NodeList nodeList = Mockito.mock(NodeList.class);
+              Mockito.when(nodeList.getItems()).thenReturn(createTestNodeList());
+              Mockito.when(nodeOperation.list()).thenReturn(nodeList);
+              Mockito.when(mockClient.nodes()).thenReturn(nodeOperation);
+
+              return mockClient;
+
+            }
+
+            @Override
+            public PodTemplate getTemplate(Label label) {
+                if (label.toString().equals("small-request")) {
+                    return createTestPodTemplate("1000m", "1");
+                } else {
+                    return createTestPodTemplate("2000m", "3");
+                }
+            }
+
+        };
+
+        KubernetesCloudLimiter limiter = cloud.getLimiter();
+
+        int actual = limiter.getNumSchedulablePods(largeRequest);
+        // the large request template has a total cpu request of 5000m. the large-ready-node has 6000m available, so 1 pod can be scheduled
+        int expected = 1;
+        assertEquals("Amount of schedulable pods is wrong", expected, actual);
+
+        actual = limiter.getNumSchedulablePods(smallRequest);
+        // the small request template has a total cpu request of 2000m. the medium-ready-node has 3000m available and the  
+        // large-ready-node has 6000m available, so 4 pods can be scheduled
+        expected = 4;
+        assertEquals("Amount of schedulable pods is wrong", expected, actual);
     }
 
     @Test
@@ -380,7 +469,7 @@ public class KubernetesCloudLimiterTest {
 
             @Override
             public PodTemplate getTemplate(Label label) {
-                return createTestPodTemplate();
+                return createTestPodTemplate("4000m", "1");
             }
         };
         
