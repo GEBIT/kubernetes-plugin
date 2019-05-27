@@ -67,6 +67,7 @@ import io.fabric8.kubernetes.api.model.PodFluent.SpecNested;
 import io.fabric8.kubernetes.api.model.Probe;
 import io.fabric8.kubernetes.api.model.ProbeBuilder;
 import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.SecurityContext;
 import io.fabric8.kubernetes.api.model.SecurityContextBuilder;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
@@ -226,9 +227,17 @@ public class PodTemplateBuilder {
         envVars.putAll(jnlp.getEnv().stream().collect(Collectors.toMap(EnvVar::getName, Function.identity())));
         jnlp.setEnv(new ArrayList<>(envVars.values()));
 
-        // allow the jnlp container to read and send signals to shared processes
         pod.getSpec().setShareProcessNamespace(true);
+        SecurityContext secContext = jnlp.getSecurityContext();
+        Boolean privileged = secContext != null ? secContext.getPrivileged() : false;
         jnlp.setSecurityContext(new SecurityContextBuilder().
+                // keep "privileged" setting from template
+                withPrivileged(privileged).
+                // make sure container runs as jenkins user and group
+                withNewRunAsUser(1000).withNewRunAsGroup(1000).
+                // allow the jnlp container to share the process namespace
+                // this way a slave container can control processes of side-car containers, for example it can send a SIGTERM
+                // to a postgresql container running in the same pod when the build is finished
                 withNewCapabilities().
                     addToAdd("SYS_PTRACE").
                 endCapabilities().
