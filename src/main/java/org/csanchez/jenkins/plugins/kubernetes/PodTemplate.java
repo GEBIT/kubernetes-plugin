@@ -74,8 +74,6 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
 
     private boolean privileged;
 
-    private boolean capOnlyOnAlivePods;
-
     private boolean alwaysPullImage;
 
     private String command;
@@ -83,8 +81,6 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
     private String args;
 
     private String remoteFs;
-
-    private int instanceCap = Integer.MAX_VALUE;
 
     private int slaveConnectTimeout = DEFAULT_SLAVE_JENKINS_CONNECTION_TIMEOUT;
 
@@ -161,7 +157,6 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
         this.setAnnotations(from.getAnnotations());
         this.setContainers(from.getContainers());
         this.setImagePullSecrets(from.getImagePullSecrets());
-        this.setInstanceCap(from.getInstanceCap());
         this.setLabel(from.getLabel());
         this.setName(from.getName());
         this.setNamespace(from.getNamespace());
@@ -273,18 +268,6 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
         return getFirstContainer().map(ContainerTemplate::getWorkingDir).orElse(ContainerTemplate.DEFAULT_WORKING_DIR);
     }
 
-    public void setInstanceCap(int instanceCap) {
-        if (instanceCap < 0) {
-            this.instanceCap = Integer.MAX_VALUE;
-        } else {
-            this.instanceCap = instanceCap;
-        }
-    }
-
-    public int getInstanceCap() {
-        return instanceCap;
-    }
-
     public void setSlaveConnectTimeout(int slaveConnectTimeout) {
         if (slaveConnectTimeout <= 0) {
             LOGGER.log(Level.WARNING, "Agent -> Jenkins connection timeout " +
@@ -300,23 +283,6 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
         if (slaveConnectTimeout == 0)
             return DEFAULT_SLAVE_JENKINS_CONNECTION_TIMEOUT;
         return slaveConnectTimeout;
-    }
-
-    @DataBoundSetter
-    public void setInstanceCapStr(String instanceCapStr) {
-        if (StringUtils.isBlank(instanceCapStr)) {
-            setInstanceCap(Integer.MAX_VALUE);
-        } else {
-            setInstanceCap(Integer.parseInt(instanceCapStr));
-        }
-    }
-
-    public String getInstanceCapStr() {
-        if (getInstanceCap() == Integer.MAX_VALUE) {
-            return "";
-        } else {
-            return String.valueOf(instanceCap);
-        }
     }
 
     @DataBoundSetter
@@ -458,17 +424,6 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
     @Deprecated
     public boolean isAlwaysPullImage() {
         return getFirstContainer().map(ContainerTemplate::isAlwaysPullImage).orElse(false);
-    }
-
-    @DataBoundSetter
-    @Deprecated
-    public void setCapOnlyOnAlivePods(boolean capOnlyOnAlivePods) {
-        this.capOnlyOnAlivePods = capOnlyOnAlivePods;
-    }
-
-    @Deprecated
-    public boolean isCapOnlyOnAlivePods() {
-        return capOnlyOnAlivePods;
     }
 
     public List<TemplateEnvVar> getEnvVars() {
@@ -872,7 +827,6 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
                 (command == null ? "" : ", command='" + command + '\'') +
                 (args == null ? "" : ", args='" + args + '\'') +
                 (remoteFs == null ? "" : ", remoteFs='" + remoteFs + '\'') +
-                (instanceCap == Integer.MAX_VALUE ? "" : ", instanceCap=" + instanceCap) +
                 (slaveConnectTimeout == DEFAULT_SLAVE_JENKINS_CONNECTION_TIMEOUT ? "" : ", slaveConnectTimeout=" + slaveConnectTimeout) +
                 (idleMinutes == 0 ? "" : ", idleMinutes=" + idleMinutes) +
                 (activeDeadlineSeconds == 0 ? "" : ", activeDeadlineSeconds=" + activeDeadlineSeconds) +

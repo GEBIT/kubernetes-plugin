@@ -236,7 +236,6 @@ public class PodTemplateUtilsTest {
         podTemplate.setNodeUsageMode(Node.Mode.EXCLUSIVE);
         podTemplate.setImagePullSecrets(asList(SECRET_1));
         podTemplate.setInheritFrom("Inherit");
-        podTemplate.setInstanceCap(99);
         podTemplate.setSlaveConnectTimeout(99);
         podTemplate.setIdleMinutes(99);
         podTemplate.setActiveDeadlineSeconds(99);
@@ -254,7 +253,6 @@ public class PodTemplateUtilsTest {
         assertEquals(Node.Mode.EXCLUSIVE, selfCombined.getNodeUsageMode());
         assertEquals(asList(SECRET_1), selfCombined.getImagePullSecrets());
         assertEquals("Inherit", selfCombined.getInheritFrom());
-        assertEquals(99, selfCombined.getInstanceCap());
         assertEquals(99, selfCombined.getSlaveConnectTimeout());
         assertEquals(99, selfCombined.getIdleMinutes());
         assertEquals(99, selfCombined.getActiveDeadlineSeconds());

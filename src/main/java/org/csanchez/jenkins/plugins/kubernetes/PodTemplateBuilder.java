@@ -67,6 +67,8 @@ import io.fabric8.kubernetes.api.model.PodFluent.SpecNested;
 import io.fabric8.kubernetes.api.model.Probe;
 import io.fabric8.kubernetes.api.model.ProbeBuilder;
 import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.SecurityContext;
+import io.fabric8.kubernetes.api.model.SecurityContextBuilder;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
 import io.fabric8.kubernetes.api.model.VolumeMount;
@@ -225,6 +227,20 @@ public class PodTemplateBuilder {
                 template.getEnvVars());
         envVars.putAll(jnlp.getEnv().stream().collect(Collectors.toMap(EnvVar::getName, Function.identity())));
         jnlp.setEnv(new ArrayList<>(envVars.values()));
+
+        pod.getSpec().setShareProcessNamespace(true);
+        SecurityContext secContext = jnlp.getSecurityContext();
+        Boolean privileged = secContext != null ? secContext.getPrivileged() : false;
+        jnlp.setSecurityContext(new SecurityContextBuilder().
+                // keep "privileged" setting from template
+                withPrivileged(privileged).
+                // allow the jnlp container to share the process namespace
+                // this way a slave container can control processes of side-car containers, for example it can send a SIGTERM
+                // to a postgresql container running in the same pod when the build is finished
+                withNewCapabilities().
+                    addToAdd("SYS_PTRACE").
+                endCapabilities().
+            build());
 
         // default workspace volume, add an empty volume to share the workspace across the pod
         if (pod.getSpec().getVolumes().stream().noneMatch(v -> WORKSPACE_VOLUME_NAME.equals(v.getName()))) {

@@ -193,7 +193,6 @@ public class KubernetesTest {
     private void assertPodTemplates(List<PodTemplate> templates) {
         assertEquals(1, templates.size());
         PodTemplate podTemplate = templates.get(0);
-        assertEquals(Integer.MAX_VALUE, podTemplate.getInstanceCap());
         assertEquals(1, podTemplate.getContainers().size());
         ContainerTemplate containerTemplate = podTemplate.getContainers().get(0);
         assertEquals("jenkins/jnlp-slave", containerTemplate.getImage());

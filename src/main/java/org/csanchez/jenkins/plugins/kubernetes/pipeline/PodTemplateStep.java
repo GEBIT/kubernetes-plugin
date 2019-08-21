@@ -50,7 +50,6 @@ public class PodTemplateStep extends Step implements Serializable {
     private List<PodAnnotation> annotations = new ArrayList<>();
     private List<String> imagePullSecrets = new ArrayList<>();
 
-    private int instanceCap = Integer.MAX_VALUE;
     private int idleMinutes;
     private int slaveConnectTimeout = PodTemplate.DEFAULT_SLAVE_JENKINS_CONNECTION_TIMEOUT;
     private int activeDeadlineSeconds;
@@ -160,15 +159,6 @@ public class PodTemplateStep extends Step implements Serializable {
     @DataBoundSetter
     public void setWorkspaceVolume(WorkspaceVolume workspaceVolume) {
         this.workspaceVolume = workspaceVolume;
-    }
-
-    public int getInstanceCap() {
-        return instanceCap;
-    }
-
-    @DataBoundSetter
-    public void setInstanceCap(int instanceCap) {
-        this.instanceCap = instanceCap;
     }
 
     public int getIdleMinutes() {

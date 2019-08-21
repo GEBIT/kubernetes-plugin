@@ -2,7 +2,6 @@ package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 
 import org.apache.commons.lang.StringUtils;
 import org.csanchez.jenkins.plugins.kubernetes.ContainerTemplate;
-import org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud;
 import org.jenkinsci.Symbol;
 import org.jenkinsci.plugins.pipeline.modeldefinition.agent.DeclarativeAgent;
 import org.jenkinsci.plugins.pipeline.modeldefinition.agent.DeclarativeAgentDescriptor;
@@ -34,7 +33,6 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
     private String inheritFrom;
 
     private int idleMinutes;
-    private int instanceCap;
     private String serviceAccount;
     private String nodeSelector;
     private String namespace;
@@ -102,15 +100,6 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
     @DataBoundSetter
     public void setInheritFrom(String inheritFrom) {
         this.inheritFrom = inheritFrom;
-    }
-
-    public int getInstanceCap() {
-        return instanceCap;
-    }
-
-    @DataBoundSetter
-    public void setInstanceCap(int instanceCap) {
-        this.instanceCap = instanceCap;
     }
 
     public String getServiceAccount() {
@@ -268,10 +257,6 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
         }
         if (slaveConnectTimeout != 0) {
             argMap.put("slaveConnectTimeout", slaveConnectTimeout);
-        }
-
-        if (instanceCap > 0) {
-            argMap.put("instanceCap", instanceCap);
         }
 
         return argMap;

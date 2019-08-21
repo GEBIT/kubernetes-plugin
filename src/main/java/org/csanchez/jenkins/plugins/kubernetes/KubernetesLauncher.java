@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -44,15 +45,26 @@ import org.kohsuke.stapler.DataBoundConstructor;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 
+import antlr.ANTLRException;
+import hudson.model.Label;
+import hudson.model.Queue;
 import hudson.model.TaskListener;
+import hudson.model.Queue.BuildableItem;
+import hudson.model.Queue.NotWaitingItem;
+import hudson.model.labels.LabelAtom;
 import hudson.slaves.JNLPLauncher;
 import hudson.slaves.SlaveComputer;
+import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerStatus;
+import io.fabric8.kubernetes.api.model.EnvVarBuilder;
+import io.fabric8.kubernetes.api.model.HostPathVolumeSource;
 import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.dsl.LogWatch;
 import io.fabric8.kubernetes.client.dsl.PrettyLoggable;
+import jenkins.model.Jenkins;
 
 /**
  * Launches on Kubernetes the specified {@link KubernetesComputer} instance.
@@ -63,6 +75,11 @@ public class KubernetesLauncher extends JNLPLauncher {
     private transient AllContainersRunningPodWatcher watcher;
 
     private static final Logger LOGGER = Logger.getLogger(KubernetesLauncher.class.getName());
+
+    static final String JOB_NAME_LABEL = "job-name";
+    private static final String PIPELINE_JOB_NAME_PREFIX = "^part of ";
+    private static final String PIPELINE_JOB_NAME_SUFFIX = " #[0-9]+$";
+    private static final String PIPELINE_JOB_URL_SUFFIX = "/[0-9]+/$";
 
     private boolean launched;
 
@@ -104,6 +121,10 @@ public class KubernetesLauncher extends JNLPLauncher {
             return;
         }
 
+        if (Jenkins.get().isQuietingDown() || Jenkins.get().isTerminating()) {
+            throw new IllegalStateException("Jenkins is qieting down or terminating, no new agent will be provisioned");
+        }
+
         final PodTemplate template = slave.getTemplate();
         try {
             KubernetesClient client = slave.getKubernetesCloud().connect();
@@ -120,10 +141,35 @@ public class KubernetesLauncher extends JNLPLauncher {
                     .stream().filter(s -> StringUtils.isNotBlank(s)).findFirst().orElse(null);
             slave.setNamespace(namespace);
 
-            LOGGER.log(Level.FINE, "Creating Pod: {0}/{1}", new Object[] { namespace, podId });
-            pod = client.pods().inNamespace(namespace).create(pod);
-            LOGGER.log(INFO, "Created Pod: {0}/{1}", new Object[] { namespace, podId });
-            listener.getLogger().printf("Created Pod: %s/%s%n", namespace, podId);
+            // get current buildable item from the global build queue and provision for it
+            Queue queue = Jenkins.get().getQueue();
+            List<BuildableItem> buildables = queue.getBuildableItems();
+
+            // KubernetesLauncher.launch() gets called concurrently
+            // ensure that checking for the first unprovisioned job and creating a pod for it
+            // is done atomically
+            synchronized (KubernetesLauncher.class) {
+
+                BuildableItem buildable = findFirstBuildableToProvisionFor(buildables, namespace,
+                        template.getLabel(), client);
+                if (buildable == null) {
+                    // we must throw an exception here, a simple return leads to a zombie slave
+                    throw new IllegalStateException("No unprovisioned job found in queue");
+                }
+
+                String podLabel = calcPodLabel(buildable);
+                //set the label string early, so that Jenkins can provision for other jobs earlier
+                slave.setLabelString(podLabel);
+
+                // adjust pod dynamically to the job that gets scheduled to it
+                adjustPodToBuildable(pod, buildable, namespace);
+
+                LOGGER.log(Level.FINE, "Creating Pod: {0} in namespace {1}", new Object[]{podId, namespace});
+                pod = client.pods().inNamespace(namespace).create(pod);
+                LOGGER.log(INFO, "Created Pod: {0} in namespace {1}", new Object[]{podId, namespace});
+                listener.getLogger().printf("Created Pod: %s in namespace %s%n", podId, namespace);
+            }
+
             String podName = pod.getMetadata().getName();
             String namespace1 = pod.getMetadata().getNamespace();
             watcher = new AllContainersRunningPodWatcher(client, pod);
@@ -210,6 +256,125 @@ public class KubernetesLauncher extends JNLPLauncher {
             }
             throw Throwables.propagate(ex);
         }
+    }
+
+    BuildableItem findFirstBuildableToProvisionFor(List<BuildableItem> buildables, String namespace,
+            String templateLabel, KubernetesClient client) {
+
+        Set<LabelAtom> templateLabelSet = Label.parse(templateLabel);
+
+        for (BuildableItem buildable : buildables) {
+            String podLabel = calcPodLabel(buildable);
+            LOGGER.log(Level.FINE, "checking if buildable {0} should be provisioned", podLabel);
+
+            if (buildable instanceof NotWaitingItem) {
+                //this item is not waiting
+                LOGGER.log(Level.FINEST, "buildable {0} is not waiting", podLabel);
+                if (KubernetesCloud.filterActiveAgentPods(client.pods()
+                        .inNamespace(namespace)
+                        .withLabel(JOB_NAME_LABEL, podLabel)
+                        .list())
+                        .isEmpty()) {
+                    LOGGER.log(Level.FINEST, "buildable {0} has no other active pod running", podLabel);
+                    //no other active pod exists for this job
+                    Label labelExpression = parseLabelExpression(buildable.task.getAssignedLabel().getExpression());
+                    if (labelExpression != null && labelExpression.matches(templateLabelSet)) {
+                        //the template label satisfies the job's label expression, provision
+                        LOGGER.log(Level.FINE, "buildable {0} has all criteria true, provision!", podLabel);
+                        return buildable;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    void adjustPodToBuildable(Pod pod, BuildableItem buildable, String namespace) {
+        String podLabel = calcPodLabel(buildable);
+        String workspacePath = calcWorkspacePath(buildable);
+        LOGGER.log(INFO, "podLabel : {0}, workspacePath: {1}", new Object[] {podLabel, workspacePath});
+
+        // label pod with job name
+        pod.getMetadata().getLabels().put(JOB_NAME_LABEL, podLabel);
+
+        Container jnlp = findJnlpContainer(pod.getSpec().getContainers());
+        if (jnlp != null) {
+            // add full job name as environment variable for script inside the agent container
+            jnlp.getEnv().add(new EnvVarBuilder().withName("WORKSPACE_PATH").withValue(workspacePath).build());
+            // adjust the workspace directory on the host to contain a directory for the namespace and the job name
+            adjustWorkspaceVolume(pod, podLabel, namespace);
+        } else {
+            LOGGER.log(WARNING, "could not find jnlp container volume to adjust : {0}", pod);
+        }
+    }
+
+    void adjustWorkspaceVolume(Pod pod, String jobName, String namespace) {
+        // find the HostPath workspace volume
+        HostPathVolumeSource hostPath = findWorkspaceVolumeSource(pod);
+        if (hostPath != null) {
+            // adjust HostPath workspace volume for specific job
+            hostPath.setPath(hostPath.getPath() + "/" + namespace + "/" + jobName);
+            LOGGER.log(FINE, "adjusted hostpath volume : {0}", hostPath);
+        } else {
+            LOGGER.log(WARNING, "could not find hostpath volume to adjust : {0}", hostPath);
+        }
+    }
+
+    HostPathVolumeSource findWorkspaceVolumeSource(Pod pod) {
+        List<Volume> volumes = pod.getSpec().getVolumes();
+        for (Volume vol : volumes) {
+            HostPathVolumeSource hostPath = vol.getHostPath();
+            if (vol.getName().equals("volume-0") && hostPath != null) {
+                // this is the first hostPath volume of the pod, it's the workspace volume
+                // by convention
+                LOGGER.log(FINE, "found job host path: {0}", hostPath);
+                return hostPath;
+            }
+        }
+        return null;
+    }
+
+    boolean isPipelineJob(BuildableItem buildable) {
+        // do not use instanceof here, because the dependencies between the different
+        // workflow/pipeline jars are unclear
+        return buildable.task.getClass().getSimpleName().equals("PlaceholderTask");
+    }
+
+    String calcWorkspacePath(BuildableItem buildable) {
+        String name = buildable.task.getUrl().replace("job/", "");
+        if (isPipelineJob(buildable)) {
+            // this is a PipelineJob, adjust name further
+            name = name.replaceFirst(PIPELINE_JOB_URL_SUFFIX, "");
+        }
+        return name;
+    }
+
+    String calcPodLabel(BuildableItem buildable) {
+        String name = buildable.task.getName();
+        if (isPipelineJob(buildable)) {
+            // this is a PipelineJob, adjust name further
+            name = name.replaceFirst(PIPELINE_JOB_NAME_PREFIX, "").replaceFirst(PIPELINE_JOB_NAME_SUFFIX, "");
+        }
+        return name;
+    }
+
+    Container findJnlpContainer(List<Container> containers) {
+        for (Container c : containers) {
+            if (c.getName().equals(KubernetesCloud.JNLP_NAME)) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    private Label parseLabelExpression(String labelString) {
+        Label result = null;
+        try {
+            result = Label.parseExpression(labelString);
+        } catch (ANTLRException e) {
+            LOGGER.log(Level.SEVERE, "error parsing label string {0}", labelString);
+        }
+        return result;
     }
 
     private void checkTerminatedContainers(List<ContainerStatus> terminatedContainers, String podId, String namespace,

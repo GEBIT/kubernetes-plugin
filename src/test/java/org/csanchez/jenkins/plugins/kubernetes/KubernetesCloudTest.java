@@ -31,12 +31,20 @@ import org.mockito.Mockito;
 
 import hudson.model.Label;
 import hudson.slaves.NodeProvisioner;
+import io.fabric8.kubernetes.api.model.ConfigMap;
+import io.fabric8.kubernetes.api.model.ConfigMapList;
+import io.fabric8.kubernetes.api.model.DoneableConfigMap;
+import io.fabric8.kubernetes.api.model.DoneableNode;
 import io.fabric8.kubernetes.api.model.DoneablePod;
+import io.fabric8.kubernetes.api.model.Node;
+import io.fabric8.kubernetes.api.model.NodeList;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
+import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.PodResource;
+import io.fabric8.kubernetes.client.dsl.Resource;
 import jenkins.model.JenkinsLocationConfiguration;
 
 public class KubernetesCloudTest {
@@ -112,77 +120,6 @@ public class KubernetesCloudTest {
     }
 
     @Test
-    public void testInstanceCap() {
-        KubernetesCloud cloud = new KubernetesCloud("name") {
-            @Override
-            public KubernetesClient connect() throws UnrecoverableKeyException, NoSuchAlgorithmException, KeyStoreException, IOException, CertificateEncodingException {
-                KubernetesClient mockClient =  Mockito.mock(KubernetesClient.class);
-                Mockito.when(mockClient.getNamespace()).thenReturn("default");
-                MixedOperation<Pod, PodList, DoneablePod, PodResource<Pod, DoneablePod>> operation = Mockito.mock(MixedOperation.class);
-                Mockito.when(operation.inNamespace(Mockito.anyString())).thenReturn(operation);
-                Mockito.when(operation.withLabels(Mockito.anyMap())).thenReturn(operation);
-                PodList podList = Mockito.mock(PodList.class);
-                Mockito.when(podList.getItems()).thenReturn(new ArrayList<>());
-                Mockito.when(operation.list()).thenReturn(podList);
-                Mockito.when(mockClient.pods()).thenReturn(operation);
-                return mockClient;
-            }
-        };
-
-        PodTemplate podTemplate = new PodTemplate();
-        podTemplate.setName("test");
-        podTemplate.setLabel("test");
-
-        cloud.addTemplate(podTemplate);
-
-        Label test = Label.get("test");
-        assertTrue(cloud.canProvision(test));
-
-        Collection<NodeProvisioner.PlannedNode> plannedNodes = cloud.provision(test, 200);
-        assertEquals(200, plannedNodes.size());
-
-        podTemplate.setInstanceCap(5);
-        plannedNodes = cloud.provision(test, 200);
-        assertEquals(5, plannedNodes.size());
-    }
-
-    @Test
-    public void testContainerCap() {
-        KubernetesCloud cloud = new KubernetesCloud("name") {
-            @Override
-            public KubernetesClient connect() throws UnrecoverableKeyException, NoSuchAlgorithmException, KeyStoreException, IOException, CertificateEncodingException {
-                KubernetesClient mockClient =  Mockito.mock(KubernetesClient.class);
-                Mockito.when(mockClient.getNamespace()).thenReturn("default");
-                MixedOperation<Pod, PodList, DoneablePod, PodResource<Pod, DoneablePod>> operation = Mockito.mock(MixedOperation.class);
-                Mockito.when(operation.inNamespace(Mockito.anyString())).thenReturn(operation);
-                Mockito.when(operation.withLabels(Mockito.anyMap())).thenReturn(operation);
-                PodList podList = Mockito.mock(PodList.class);
-                Mockito.when(podList.getItems()).thenReturn(new ArrayList<>());
-                Mockito.when(operation.list()).thenReturn(podList);
-                Mockito.when(mockClient.pods()).thenReturn(operation);
-                return mockClient;
-            }
-        };
-
-        PodTemplate podTemplate = new PodTemplate();
-        podTemplate.setName("test");
-        podTemplate.setLabel("test");
-
-        cloud.addTemplate(podTemplate);
-
-        Label test = Label.get("test");
-        assertTrue(cloud.canProvision(test));
-
-        Collection<NodeProvisioner.PlannedNode> plannedNodes = cloud.provision(test, 200);
-        assertEquals(200, plannedNodes.size());
-
-        cloud.setContainerCapStr("10");
-        podTemplate.setInstanceCap(20);
-        plannedNodes = cloud.provision(test, 200);
-        assertEquals(10, plannedNodes.size());
-    }
-
-    @Test
     public void testPodLabels() {
         List<PodLabel> defaultPodLabelsList = PodLabel.fromMap(KubernetesCloud.DEFAULT_POD_LABELS);
         KubernetesCloud cloud = new KubernetesCloud("name");
@@ -248,7 +185,6 @@ public class KubernetesCloudTest {
         cloud.setJenkinsUrl("jenkinsUrl");
         cloud.setJenkinsTunnel("tunnel");
         cloud.setCredentialsId("abcd");
-        cloud.setContainerCapStr("100");
         cloud.setRetentionTimeout(1000);
         cloud.setConnectTimeout(123);
         cloud.setUsageRestricted(true);
