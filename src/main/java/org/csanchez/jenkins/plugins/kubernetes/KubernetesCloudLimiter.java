@@ -11,7 +11,6 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import hudson.model.Label;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.DoneableConfigMap;
@@ -19,6 +18,7 @@ import io.fabric8.kubernetes.api.model.Node;
 import io.fabric8.kubernetes.api.model.NodeCondition;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.fabric8.kubernetes.client.dsl.Resource;
 
 /**
@@ -41,7 +41,8 @@ public class KubernetesCloudLimiter {
     static final String GLOBAL_CONFIG_MAP_NAME = "default";
     static final String LOCKED = "locked";
     static final String GLOBAL_NAMESPACE = "jenkins-masters";
-    static final String NUM_PENDING_LAUNCHES = "numPendingLaunches";
+    static final String PENDING_CPU_MILLIS = "pendingCpuMillis";
+    static final String PENDING_MEM_MI = "pendingMemMi";
     static final long MAX_ĹOCK_TIME_MS = 60 * 1000;
     static final int MAX_TRIES = 5;
 
@@ -63,7 +64,7 @@ public class KubernetesCloudLimiter {
         return findGlobalConfigMap().get();
     }
 
-    private void checkGlobalConfigMap() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+    void checkGlobalConfigMap() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
         ConfigMap globalConfigMap = getGlobalConfigMap();
 
         if (globalConfigMap == null) {
@@ -76,7 +77,8 @@ public class KubernetesCloudLimiter {
 
             //init new data map
             Map<String, String> data = new HashMap<>();
-            data.put(NUM_PENDING_LAUNCHES, "0");
+            data.put(PENDING_CPU_MILLIS, "0");
+            data.put(PENDING_MEM_MI, "0");
             data.put(LOCKED, "false");
 
             cloud.connect().configMaps().inNamespace(GLOBAL_NAMESPACE).createOrReplaceWithNew().
@@ -123,35 +125,62 @@ public class KubernetesCloudLimiter {
         return false;
     }
 
+    int getPendingCpuMillis() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        checkGlobalConfigMap();
+
+        ConfigMap cm = getGlobalConfigMap();
+        return Integer.parseInt(cm.getData().get(PENDING_CPU_MILLIS));
+    }
+
+    int getPendingMemMi() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        checkGlobalConfigMap();
+
+        ConfigMap cm = getGlobalConfigMap();
+        return Integer.parseInt(cm.getData().get(PENDING_MEM_MI));
+    }
+
     public void releaseLock() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
         checkGlobalConfigMap();
 
         findGlobalConfigMap().edit().addToData(LOCKED, "false").done();
     }
 
-    public int getNumOfPendingLaunchesK8S() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
-        checkGlobalConfigMap();
+    public void incPending(PodTemplate template) throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        // build the pod now and estimate it, so the yaml from the template is taken into account too
+        Pod pod = new PodTemplateBuilder(template).build();
 
-        ConfigMap cm = getGlobalConfigMap();
-        String numPendingLaunches = cm.getData().get(NUM_PENDING_LAUNCHES);
-        if (numPendingLaunches != null) {
-            LOGGER.log(Level.FINE, "get numPendingLaunches: {0}", numPendingLaunches);
-            return Integer.parseInt(numPendingLaunches);
-        } else {
-            return 0;
-        }
+        int pendingCpuMillis = getPendingCpuMillis();
+        int requestedCpuMillis = getPodCpuRequestMillis(pod);
+        int totalPendingCpuMillis = pendingCpuMillis + requestedCpuMillis;
+
+        findGlobalConfigMap().edit().addToData(PENDING_CPU_MILLIS, Integer.toString(totalPendingCpuMillis)).done();
+        LOGGER.log(Level.FINE, "inc PENDING_CPU_MILLIS to: {0}", totalPendingCpuMillis);
+
+        int pendingMemMillis = getPendingMemMi();
+        int requestedMemMillis = getPodMemRequestMi(pod);
+        int totalPendingMemMillis = pendingMemMillis + requestedMemMillis;
+
+        findGlobalConfigMap().edit().addToData(PENDING_MEM_MI, Integer.toString(totalPendingMemMillis)).done();
+        LOGGER.log(Level.FINE, "inc PENDING_MEM_MI to: {0}", totalPendingMemMillis);
     }
 
-    public void setNumOfPendingLaunchesK8S(int numPendingLaunches) throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
-        checkGlobalConfigMap();
+    public void decPending(PodTemplate template) throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        // build the pod now and estimate it, so the yaml from the template is taken into account too
+        Pod pod = new PodTemplateBuilder(template).build();
 
-        // while developing, a jenkins-master can get "force undeployed" before all of it's provisionings and jobs are
-        // finished. This can lead to numPendingLaunches of less than 0. Guard against this.
-        if (numPendingLaunches < 0) {
-            numPendingLaunches = 0;
-        }
-        findGlobalConfigMap().edit().addToData(NUM_PENDING_LAUNCHES, Integer.toString(numPendingLaunches)).done();
-        LOGGER.log(Level.FINE, "set numPendingLaunches to: {0}", numPendingLaunches);
+        int pendingCpuMillis = getPendingCpuMillis();
+        int provisionedCpuMillis = getPodCpuRequestMillis(pod);
+        int totalPendingCpuMillis = pendingCpuMillis - provisionedCpuMillis;
+
+        findGlobalConfigMap().edit().addToData(PENDING_CPU_MILLIS, Integer.toString(totalPendingCpuMillis)).done();
+        LOGGER.log(Level.FINE, "dec PENDING_CPU_MILLIS to: {0}", totalPendingCpuMillis);
+
+        int pendingMemMillis = getPendingMemMi();
+        int provisionedMemMillis = getPodMemRequestMi(pod);
+        int totalPendingMemMillis = pendingMemMillis - provisionedMemMillis;
+
+        findGlobalConfigMap().edit().addToData(PENDING_MEM_MI, Integer.toString(totalPendingMemMillis)).done();
+        LOGGER.log(Level.FINE, "dec PENDING_MEM_MI to: {0}", totalPendingMemMillis);
     }
 
     private boolean isNodeReady(Node node) {
@@ -170,54 +199,99 @@ public class KubernetesCloudLimiter {
         return false;
     }
 
-    public int getNumSchedulablePods(Label label) throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
-        // how much the template requests 
-        int cpuRequest = getPodTemplateCpuRequestMillis(label);
-        // how much is allocatable (maximum capacity) per node
-        Map<String, Integer> allocatableCpu = getAllocatableCpuMillisByNode();
-        // how much is used per node
-        Map<String, Integer> usedCpu = getUsedCpuMillisByNode();
-        // how much is available per node (difference of allocatable and used)
-        Map<String, Integer> availableCpu = calcAvailableCpuMillis(allocatableCpu, usedCpu);
+    public int estimateNumSchedulablePods(PodTemplate template) throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        LOGGER.log(Level.FINE, "estimating for template: {0}", template);
 
-        int result = 0;
-        for (Integer availableCpuOnOneNode : availableCpu.values()) {
-            // count the number of times the requests would fit on each node
-            result += availableCpuOnOneNode / cpuRequest;
-        }
-        return result;
+        // build the pod now and estimate it, so the yaml from the template is taken into account too
+        Pod pod = new PodTemplateBuilder(template).build();
+
+        return Math.max(0, Math.min(estimateByCpu(pod), estimateByMem(pod)));
     }
 
-    int getPodTemplateCpuRequestMillis(Label label) {
-        int podTemplateCpuRequestMillis = 0;
-
-        PodTemplate podTemplate = cloud.getTemplate(label);
-
-        for (ContainerTemplate containerTemplate : podTemplate.getContainers()) {
-            podTemplateCpuRequestMillis += calcQuantityMillis(containerTemplate.getResourceRequestCpu());
+    public int estimateByCpu(Pod pod) throws UnrecoverableKeyException, CertificateEncodingException,
+            NoSuchAlgorithmException, KeyStoreException, IOException {
+        // how much the template requests
+        int cpuRequest = getPodCpuRequestMillis(pod);
+        if (cpuRequest == 0) {
+            // we do not allow templates with an undefined cpu request value
+            // templates MUST define a cpu request
+            LOGGER.log(Level.WARNING, "PodTemplate {0} has 0 CPU request, will not be scheduled", pod.getMetadata().getName());
+            return 0;
         }
+        // how much is allocatable (maximum capacity) of the cluster
+        int allocatableCpu = getAllocatableCpuMillis();
+        // how much is used over the whole cluster
+        int usedCpu = getUsedCpuMillis();
+        // the currently pending cpu millis
+        int pendingCpu = getPendingCpuMillis();
+        // how much is available for the whole cluster
+        int availableCpu = allocatableCpu - usedCpu - pendingCpu;
 
-        return podTemplateCpuRequestMillis;
+        return (availableCpu / cpuRequest);
     }
 
-    private Map<String, Integer> calcAvailableCpuMillis(Map<String, Integer> allocatable, Map<String, Integer> used) {
-        Map<String, Integer> result = new HashMap<>();
+    public int estimateByMem(Pod pod) throws UnrecoverableKeyException, CertificateEncodingException,
+            NoSuchAlgorithmException, KeyStoreException, IOException {
+        // how much the template requests
+        int memRequest = getPodMemRequestMi(pod);
+        if (memRequest == 0) {
+            // we do not allow templates with an undefined mem request value
+            // templates MUST define a mem request
+            LOGGER.log(Level.WARNING, "Pod {0} has 0 MEM request, will not be scheduled", pod.getMetadata().getName());
+            return 0;
+        }
+        // how much is allocatable (maximum capacity) of the cluster
+        int allocatableMem = getAllocatableMemMi();
+        // how much is used over the whole cluster
+        int usedMem = getUsedMemMi();
+        // the currently pending mem millis
+        int pendingMem = getPendingMemMi();
+        // how much is available for the whole cluster
+        int availableMem = allocatableMem - usedMem - pendingMem;
 
-        // calculate the difference of allocatable to used for each node
-        for (String nodeName : allocatable.keySet()) {
-            Integer allocMillis = allocatable.get(nodeName);
-            Integer usedMillis = used.get(nodeName);
-            if (usedMillis == null) {
-                // no pod is using this node
-                usedMillis = 0;
+        return (availableMem / memRequest);
+    }
+
+    int getPodCpuRequestMillis(Pod pod) {
+        int podCpuRequestMillis = 0;
+
+        for (Container container : pod.getSpec().getContainers()) {
+            ResourceRequirements resources = container.getResources();
+            if (resources != null) {
+                Map<String, Quantity> requests = resources.getRequests();
+                if (requests != null) {
+                    Quantity cpu = requests.get("cpu");
+                    if (cpu != null) {
+                        podCpuRequestMillis += calcCpuQuantityMillis(cpu.getAmount());
+                    }
+                }
             }
-            result.put(nodeName, allocMillis - usedMillis);
         }
-        return result;
+
+        return podCpuRequestMillis;
     }
 
-    Map<String, Integer> getAllocatableCpuMillisByNode() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
-        Map<String, Integer> result = new HashMap<>();
+    int getPodMemRequestMi(Pod pod) {
+        int podMemRequestMi = 0;
+
+        for (Container container : pod.getSpec().getContainers()) {
+            ResourceRequirements resources = container.getResources();
+            if (resources != null) {
+                Map<String, Quantity> requests = resources.getRequests();
+                if (requests != null) {
+                    Quantity mem = requests.get("memory");
+                    if (mem != null) {
+                        podMemRequestMi += calcMemQuantityMi(mem.getAmount());
+                    }
+                }
+            }
+        }
+
+        return podMemRequestMi;
+    }
+
+    int getAllocatableCpuMillis() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        int allocatableCpuMillis = 0;
 
         List<Node> nodes = cloud.connect().nodes().withLabel(COMPUTE_LABEL_NAME, COMPUTE_LABEL_VALUE).list().getItems();
 
@@ -225,17 +299,33 @@ public class KubernetesCloudLimiter {
             if (isNodeReady(node)) {
                 Quantity cpuAlloc = node.getStatus().getAllocatable().get("cpu");
                 LOGGER.log(Level.FINE, "node {0} has cpu allocatable {1}", new Object[] {node.getMetadata().getName(), cpuAlloc});
-                result.put(node.getMetadata().getName(), calcQuantityMillis(cpuAlloc.getAmount()));
+                allocatableCpuMillis += calcCpuQuantityMillis(cpuAlloc.getAmount());
             }
         }
 
-        return result;
+        return allocatableCpuMillis;
     }
 
-    Map<String, Integer> getUsedCpuMillisByNode() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
-        Map<String, Integer> result = new HashMap<>();
+    int getAllocatableMemMi() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        int allocatableMemMi = 0;
 
-        List<Pod> activeAgentPods = KubernetesCloud.filterActiveAgentPods(cloud.connect().pods().inAnyNamespace().withLabel("jenkins", "slave").list());
+        List<Node> nodes = cloud.connect().nodes().withLabel(COMPUTE_LABEL_NAME, COMPUTE_LABEL_VALUE).list().getItems();
+
+        for (Node node : nodes) {
+            if (isNodeReady(node)) {
+                Quantity memAlloc = node.getStatus().getAllocatable().get("memory");
+                LOGGER.log(Level.FINE, "node {0} has mem allocatable {1}", new Object[] {node.getMetadata().getName(), memAlloc});
+                allocatableMemMi += calcMemQuantityMi(memAlloc.getAmount());
+            }
+        }
+
+        return allocatableMemMi;
+    }
+
+    int getUsedCpuMillis() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        int usedCpuMillis = 0;
+
+        List<Pod> activeAgentPods = KubernetesCloud.filterRunningOrPendingAgentPods(cloud.connect().pods().inAnyNamespace().withLabel("jenkins", "slave").list());
         LOGGER.log(Level.FINE, "number of active agent pods: {0}", activeAgentPods.size());
 
         for (Pod agentPod : activeAgentPods) {
@@ -248,28 +338,45 @@ public class KubernetesCloudLimiter {
                     Quantity cpuQuantity = requests.get("cpu");
                     if (cpuQuantity != null) {
                         String cpuRequest = cpuQuantity.getAmount();
-                        podUsedCpuMillis += calcQuantityMillis(cpuRequest);
+                        podUsedCpuMillis += calcCpuQuantityMillis(cpuRequest);
                     }
                 }
-                LOGGER.log(Level.FINE, "container {0} in pod {1} has requests {2} ", new Object[] {container.getName(), agentPod.getMetadata().getName(), requests});
+                LOGGER.log(Level.FINE, "container {0} in pod {1} has cpu requests {2} ", new Object[] {container.getName(), agentPod.getMetadata().getName(), requests});
             }
-            addCpuMillis(result, agentPod.getSpec().getNodeName(), podUsedCpuMillis);
+            usedCpuMillis += podUsedCpuMillis;
         }
 
-        return result;
+        return usedCpuMillis;
     }
 
-    private void addCpuMillis(Map<String, Integer> cpuMillis, String nodeName, int podUsedCpuMillis) {
-        Integer used = cpuMillis.get(nodeName);
-        if (used != null) {
-            used += podUsedCpuMillis;
-        } else {
-            used = podUsedCpuMillis;
+    int getUsedMemMi() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        int usedMemMi = 0;
+
+        List<Pod> activeAgentPods = KubernetesCloud.filterRunningOrPendingAgentPods(cloud.connect().pods().inAnyNamespace().withLabel("jenkins", "slave").list());
+        LOGGER.log(Level.FINE, "number of active agent pods: {0}", activeAgentPods.size());
+
+        for (Pod agentPod : activeAgentPods) {
+            int podUsedMemMi = 0;
+
+            List<Container> containers = agentPod.getSpec().getContainers();
+            for (Container container : containers) {
+                Map<String, Quantity> requests = container.getResources().getRequests();
+                if (requests != null) {
+                    Quantity memQuantity = requests.get("memory");
+                    if (memQuantity != null) {
+                        String memRequest = memQuantity.getAmount();
+                        podUsedMemMi += calcMemQuantityMi(memRequest);
+                    }
+                }
+                LOGGER.log(Level.FINE, "container {0} in pod {1} has mem requests {2} ", new Object[] {container.getName(), agentPod.getMetadata().getName(), requests});
+            }
+            usedMemMi += podUsedMemMi;
         }
-        cpuMillis.put(nodeName, used);
+
+        return usedMemMi;
     }
 
-    private int calcQuantityMillis(String quantity) {
+    private int calcCpuQuantityMillis(String quantity) {
         int quantityMillis = 0;
 
         try {
@@ -285,5 +392,50 @@ public class KubernetesCloudLimiter {
         }
 
         return quantityMillis;
+    }
+
+    long longPow(int a, int b) {
+        return (long) Math.pow(a, b);
+    }
+
+    private long calcMemQuantityMi(String quantity) {
+        long quantityMi = 0;
+
+        try {
+            if (quantity.length() == 0) {
+                return 0;
+            } else if (quantity.endsWith("K")) {
+                quantityMi = Long.parseLong(quantity.replace("K", "")) * 1000 / longPow(2, 20);
+            } else if (quantity.endsWith("M")) {
+                quantityMi = Long.parseLong(quantity.replace("M", "")) * longPow(1000, 2) / longPow(2, 20);
+            } else if (quantity.endsWith("G")) {
+                quantityMi = Long.parseLong(quantity.replace("G", "")) * longPow(1000, 3) / longPow(2, 20);
+            } else if (quantity.endsWith("T")) {
+                quantityMi = Long.parseLong(quantity.replace("T", "")) * longPow(1000, 4) / longPow(2, 20);
+            } else if (quantity.endsWith("P")) {
+                quantityMi = Long.parseLong(quantity.replace("P", "")) * longPow(1000, 5) / longPow(2, 20);
+            } else if (quantity.endsWith("E")) {
+                quantityMi = Long.parseLong(quantity.replace("E", "")) * longPow(1000, 6) / longPow(2, 20);
+            } else if (quantity.endsWith("Ki")) {
+                quantityMi = Long.parseLong(quantity.replace("Ki", "")) / 1024;
+            } else if (quantity.endsWith("Mi")) {
+                quantityMi = Long.parseLong(quantity.replace("Mi", ""));
+            } else if (quantity.endsWith("Gi")) {
+                quantityMi = Long.parseLong(quantity.replace("Gi", "")) * 1024;
+            } else if (quantity.endsWith("Ti")) {
+                quantityMi = Long.parseLong(quantity.replace("Ti", "")) * longPow(1024, 2);
+            } else if (quantity.endsWith("Pi")) {
+                quantityMi = Long.parseLong(quantity.replace("Pi", "")) * longPow(1024, 3);
+            } else if (quantity.endsWith("Ei")) {
+                quantityMi = Long.parseLong(quantity.replace("Ei", "")) * longPow(1024, 4);
+            } else {
+                //bytes
+                quantityMi = Long.parseLong(quantity) / 1024 / 1024;
+            }
+        } catch (NumberFormatException e) {
+            //ignore, just return 0
+        }
+
+        return quantityMi;
     }
 }

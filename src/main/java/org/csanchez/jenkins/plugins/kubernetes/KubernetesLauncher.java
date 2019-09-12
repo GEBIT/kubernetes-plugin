@@ -77,8 +77,6 @@ public class KubernetesLauncher extends JNLPLauncher {
     private static final Logger LOGGER = Logger.getLogger(KubernetesLauncher.class.getName());
 
     static final String JOB_NAME_LABEL = "job-name";
-    private static final String PIPELINE_JOB_NAME_PREFIX = "^part of ";
-    private static final String PIPELINE_JOB_NAME_SUFFIX = " #[0-9]+$";
     private static final String PIPELINE_JOB_URL_SUFFIX = "/[0-9]+/$";
 
     private boolean launched;
@@ -158,9 +156,10 @@ public class KubernetesLauncher extends JNLPLauncher {
                 }
 
                 String podLabel = calcPodLabel(buildable);
-                //set the label string early, so that Jenkins can provision for other jobs earlier
-                slave.setLabelString(podLabel);
-
+                if (!isPipelineJob(buildable)) {
+                    //set the label string early, so that Jenkins can provision for other jobs earlier
+                    slave.setLabelString(podLabel);
+                }
                 // adjust pod dynamically to the job that gets scheduled to it
                 adjustPodToBuildable(pod, buildable, namespace);
 
@@ -270,7 +269,7 @@ public class KubernetesLauncher extends JNLPLauncher {
             if (buildable instanceof NotWaitingItem) {
                 //this item is not waiting
                 LOGGER.log(Level.FINEST, "buildable {0} is not waiting", podLabel);
-                if (KubernetesCloud.filterActiveAgentPods(client.pods()
+                if (KubernetesCloud.filterRunningOrPendingAgentPods(client.pods()
                         .inNamespace(namespace)
                         .withLabel(JOB_NAME_LABEL, podLabel)
                         .list())
@@ -350,12 +349,12 @@ public class KubernetesLauncher extends JNLPLauncher {
     }
 
     String calcPodLabel(BuildableItem buildable) {
-        String name = buildable.task.getName();
+        String[] urlParts = buildable.task.getUrl().split("/");
         if (isPipelineJob(buildable)) {
-            // this is a PipelineJob, adjust name further
-            name = name.replaceFirst(PIPELINE_JOB_NAME_PREFIX, "").replaceFirst(PIPELINE_JOB_NAME_SUFFIX, "");
+            return urlParts[urlParts.length - 2];
+        } else {
+            return urlParts[urlParts.length - 1];
         }
-        return name;
     }
 
     Container findJnlpContainer(List<Container> containers) {

@@ -25,7 +25,7 @@ public class KubernetesPendingDecCloudProvisioningListener extends CloudProvisio
         }
 
         KubernetesCloud kubernetesCloud = ((KubernetesSlave) node).getKubernetesCloud();
-        onCompleteInternal(kubernetesCloud);
+        onCompleteInternal(kubernetesCloud, (KubernetesSlave) node);
     }
 
     @Override
@@ -33,16 +33,12 @@ public class KubernetesPendingDecCloudProvisioningListener extends CloudProvisio
         onCommit(plannedNode, node);
     }
 
-    private void onCompleteInternal(KubernetesCloud kubernetesCloud) {
+    private void onCompleteInternal(KubernetesCloud kubernetesCloud, KubernetesSlave node) {
         KubernetesCloudLimiter limiter = kubernetesCloud.getLimiter();
 
         try {
             limiter.acquireLock();
-
-            int numPendingLaunches = limiter.getNumOfPendingLaunchesK8S();
-            numPendingLaunches--;
-            limiter.setNumOfPendingLaunchesK8S(numPendingLaunches);
-
+            limiter.decPending(node.getTemplate());
         } catch (InterruptedException | UnrecoverableKeyException | CertificateEncodingException | NoSuchAlgorithmException | KeyStoreException | IOException e) {
             LOGGER.log(Level.SEVERE, "error acquiring lock for global config map", e);
             throw new IllegalStateException("error acquiring lock for global config map", e);

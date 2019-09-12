@@ -26,7 +26,7 @@ public abstract class PlannedNodeBuilderFactory implements ExtensionPoint {
                 return plannedNodeBuilder;
             }
         }
-        return new StandardPlannedNodeBuilder();
+        return new TrackedPlannedNodeBuilder();
     }
 
     /**

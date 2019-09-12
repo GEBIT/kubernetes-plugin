@@ -147,7 +147,7 @@ public class KubernetesLauncherTest {
 
 //    @Test
     public void testAdjustPodToBuildable() throws UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException, IOException {
-        Pod pod = KubernetesCloudLimiterTest.createTestPod("jnlp", "node1", "1", "2", "running", "cloud-project");
+        Pod pod = KubernetesCloudLimiterTest.createTestPod("jnlp", "node1", "1", "2", "1Gi", "2Gi", "running", "cloud-project");
         // add a host path volume for adjusting (the workspace volume) 
         pod.getSpec().getVolumes().add(new VolumeBuilder().withName("hostpath-volume").withHostPath(new HostPathVolumeSource("/var/test/path", "type")).build());
         

@@ -483,12 +483,11 @@ public class KubernetesCloud extends Cloud {
             }
 
             limiter.acquireLock();
-            int numPendingLaunches = limiter.getNumOfPendingLaunchesK8S();
-            int currentlySchedulablePods = limiter.getNumSchedulablePods(label) - numPendingLaunches;
+            int currentlySchedulablePods = limiter.estimateNumSchedulablePods(getTemplate(label));
 
             int toBeProvisioned = Math.max(0, Math.min(currentlySchedulablePods, excessWorkload));
-            LOGGER.log(Level.INFO, "provision request: label: {0}, currentlySchedulablePods: {1}, numPendingLaunches: {2}, toBeProvisioned: {3}",
-                    new Object[] {label, currentlySchedulablePods, numPendingLaunches, toBeProvisioned});
+            LOGGER.log(Level.INFO, "provision request: label: {0}, currentlySchedulablePods: {1}, toBeProvisioned: {2}",
+                    new Object[] {label, currentlySchedulablePods, toBeProvisioned});
 
             if (toBeProvisioned == 0) {
                 //early return to avoid unnecessary computations
@@ -498,6 +497,7 @@ public class KubernetesCloud extends Cloud {
             for (PodTemplate t: getTemplatesFor(label)) {
                 LOGGER.log(Level.FINE, "Template for label {0}: {1}", new Object[] { label, t.getDisplayName() });
                 for (int i = 0; i < toBeProvisioned; i++) {
+                    limiter.incPending(t);
                     r.add(PlannedNodeBuilderFactory.createInstance().cloud(this).template(t).label(label).build());
                 }
                 LOGGER.log(Level.FINEST, "Planned Kubernetes agents for template \"{0}\": {1}",
@@ -507,7 +507,6 @@ public class KubernetesCloud extends Cloud {
                     break;
                 }
             }
-            limiter.setNumOfPendingLaunchesK8S(numPendingLaunches + r.size());
             return r;
         } catch (KubernetesClientException e) {
             Throwable cause = e.getCause();
@@ -534,7 +533,7 @@ public class KubernetesCloud extends Cloud {
         return Collections.emptyList();
     }
 
-    public static List<Pod> filterActiveAgentPods(PodList slaveList) {
+    public static List<Pod> filterRunningOrPendingAgentPods(PodList slaveList) {
         List<Pod> allActiveSlavePods;
         allActiveSlavePods = slaveList.getItems().stream()
             .filter(x -> x.getStatus().getPhase().toLowerCase().matches("(running|pending)"))
