@@ -40,6 +40,8 @@ import java.util.stream.Collectors;
 import javax.annotation.CheckForNull;
 
 import org.apache.commons.lang.StringUtils;
+import org.jenkinsci.plugins.workflow.graph.FlowNode;
+import org.jenkinsci.plugins.workflow.support.steps.ExecutorStepExecution;
 import org.kohsuke.stapler.DataBoundConstructor;
 
 import com.google.common.base.Throwables;
@@ -334,9 +336,7 @@ public class KubernetesLauncher extends JNLPLauncher {
     }
 
     boolean isPipelineJob(BuildableItem buildable) {
-        // do not use instanceof here, because the dependencies between the different
-        // workflow/pipeline jars are unclear
-        return buildable.task.getClass().getSimpleName().equals("PlaceholderTask");
+        return buildable.task instanceof ExecutorStepExecution.PlaceholderTask;
     }
 
     String calcWorkspacePath(BuildableItem buildable) {
@@ -348,10 +348,24 @@ public class KubernetesLauncher extends JNLPLauncher {
         return name;
     }
 
+    private String getNodeId(BuildableItem buildable) {
+        String nodeId = "unknownNodeId";
+        FlowNode node = null;
+        try {
+            node = ((ExecutorStepExecution.PlaceholderTask) buildable.task).getNode();
+            if (node != null) {
+                nodeId = node.getId();
+            }
+        } catch (IOException | InterruptedException e) {
+            // ignore
+        }
+        return nodeId;
+    }
+
     String calcPodLabel(BuildableItem buildable) {
         String[] urlParts = buildable.task.getUrl().split("/");
         if (isPipelineJob(buildable)) {
-            return urlParts[urlParts.length - 2];
+            return urlParts[urlParts.length - 2] + "-" + urlParts[urlParts.length - 1] + "-" + getNodeId(buildable);
         } else {
             return urlParts[urlParts.length - 1];
         }
