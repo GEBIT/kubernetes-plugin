@@ -66,6 +66,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.dsl.LogWatch;
 import io.fabric8.kubernetes.client.dsl.PrettyLoggable;
+import io.fabric8.kubernetes.client.utils.KubernetesResourceUtil;
 import jenkins.model.Jenkins;
 
 /**
@@ -364,11 +365,13 @@ public class KubernetesLauncher extends JNLPLauncher {
 
     String calcPodLabel(BuildableItem buildable) {
         String[] urlParts = buildable.task.getUrl().split("/");
+        String podLabel = null;
         if (isPipelineJob(buildable)) {
-            return urlParts[urlParts.length - 2] + "-" + urlParts[urlParts.length - 1] + "-" + getNodeId(buildable);
+            podLabel = urlParts[urlParts.length - 2] + "-" + urlParts[urlParts.length - 1] + "-" + getNodeId(buildable);
         } else {
-            return urlParts[urlParts.length - 1];
+            podLabel = urlParts[urlParts.length - 1];
         }
+        return KubernetesResourceUtil.sanitizeName(podLabel);
     }
 
     Container findJnlpContainer(List<Container> containers) {
