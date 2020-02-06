@@ -209,7 +209,7 @@ public class KubernetesCloudLimiterTest {
     public void testIncPending() throws IOException, UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException {
         ConfigMap cm = createTestConfigMap(false, 3000, 64);
         DoneableConfigMap dcm = new DoneableConfigMap(cm);
-        PodTemplate pt = createTestPodTemplate("1000m", "4000m", "8Gi", "4G");
+        PodTemplate pt = createTestPodTemplate("1", "4.0", "8Gi", "4G");
 
         KubernetesCloud cloud = new KubernetesCloud("name") {
             @Override
@@ -240,7 +240,7 @@ public class KubernetesCloudLimiterTest {
     public void testDecPending() throws IOException, UnrecoverableKeyException, CertificateEncodingException, NoSuchAlgorithmException, KeyStoreException {
         ConfigMap cm = createTestConfigMap(false, 10000, 128000);
         DoneableConfigMap dcm = new DoneableConfigMap(cm);
-        PodTemplate pt = createTestPodTemplate("1000m", "4000m", "2000Mi", "4000M");
+        PodTemplate pt = createTestPodTemplate(".9", "4000m", "2000Mi", "4000M");
 
         KubernetesCloud cloud = new KubernetesCloud("name") {
             @Override
@@ -261,8 +261,8 @@ public class KubernetesCloudLimiterTest {
         };
 
         cloud.getLimiter().decPending(pt);
-        // must be 10000m from config map - 1000m from first container and - 4000m from second container = 5000m 
-        assertEquals("Number of pending cpu millis is wrong", 5000, Integer.parseInt(dcm.getData().get(KubernetesCloudLimiter.PENDING_CPU_MILLIS)));
+        // must be 10000m from config map - 900m from first container and - 4000m from second container = 5100m
+        assertEquals("Number of pending cpu millis is wrong", 5100, Integer.parseInt(dcm.getData().get(KubernetesCloudLimiter.PENDING_CPU_MILLIS)));
         // must be 128000Mi from config map - 2000Mi from first container and - 4000M (= 3814Mi) from second container = 122186Mi 
         assertEquals("Number of pending mem Mi is wrong", 122186, Integer.parseInt(dcm.getData().get(KubernetesCloudLimiter.PENDING_MEM_MI)));
     }

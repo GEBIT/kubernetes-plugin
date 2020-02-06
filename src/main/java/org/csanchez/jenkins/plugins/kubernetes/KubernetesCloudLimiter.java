@@ -119,6 +119,7 @@ public class KubernetesCloudLimiter {
         }
         if (locked) {
             // if its still locked after MAX_RETRIES, force it
+            LOGGER.log(Level.SEVERE, "forcing lock for global config map");
             return acquireLock(true);
         }
         LOGGER.log(Level.SEVERE, "number of max tries reached to acquire lock for global config map");
@@ -384,11 +385,13 @@ public class KubernetesCloudLimiter {
                 return 0;
             } else if (quantity.endsWith("m")) {
                 quantityMillis = Integer.parseInt(quantity.replace("m", ""));
+            } else if (quantity.contains(".")) {
+                quantityMillis = (int) (Double.parseDouble(quantity) * 1000);
             } else {
                 quantityMillis = Integer.parseInt(quantity) * 1000;
             }
         } catch (NumberFormatException e) {
-            //ignore, just return 0
+            LOGGER.log(Level.WARNING, "Failed to parse CPU quantity {0} as cpu millis", quantity);
         }
 
         return quantityMillis;
@@ -433,7 +436,7 @@ public class KubernetesCloudLimiter {
                 quantityMi = Long.parseLong(quantity) / 1024 / 1024;
             }
         } catch (NumberFormatException e) {
-            //ignore, just return 0
+            LOGGER.log(Level.WARNING, "Failed to parse MEM quantity {0} as mem Mi", quantity);
         }
 
         return quantityMi;
