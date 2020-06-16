@@ -102,7 +102,6 @@ public class PodTemplateStepExecution extends AbstractStepExecutionImpl {
         } else {
             newTemplate.setInheritFrom(Strings.emptyToNull(step.getInheritFrom()));
         }
-        newTemplate.setInstanceCap(step.getInstanceCap());
         newTemplate.setIdleMinutes(step.getIdleMinutes());
         newTemplate.setSlaveConnectTimeout(step.getSlaveConnectTimeout());
         newTemplate.setLabel(label);

@@ -42,11 +42,6 @@
                                   deleteCaption="${%Delete Volume}" />
     </f:entry>
 
-    <f:entry field="instanceCapStr" title="${%Concurrency Limit}"
-      help="/plugin/kubernetes/help/instanceCap.html">
-      <f:textbox/>
-    </f:entry>
-
     <f:dropdownDescriptorSelector title="${%Pod Retention}" field="podRetention" default="${descriptor.defaultPodRetention}" />
     
     <f:entry field="idleMinutesStr" title="${%Time in minutes to retain agent when idle}">

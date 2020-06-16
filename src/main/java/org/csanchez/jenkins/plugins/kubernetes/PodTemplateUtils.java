@@ -154,8 +154,8 @@ public class PodTemplateUtils {
         String workingDir = Strings.isNullOrEmpty(template.getWorkingDir())
                 ? (Strings.isNullOrEmpty(parent.getWorkingDir()) ? DEFAULT_WORKING_DIR : parent.getWorkingDir())
                 : template.getWorkingDir();
-        List<String> command = template.getCommand() == null ? parent.getCommand() : template.getCommand();
-        List<String> args = template.getArgs() == null ? parent.getArgs() : template.getArgs();
+        List<String> command = isListNullorEmpty(template.getCommand()) ? parent.getCommand() : template.getCommand();
+        List<String> args = isListNullorEmpty(template.getArgs()) ? parent.getArgs() : template.getArgs();
         Boolean tty = template.getTty() != null ? template.getTty() : parent.getTty();
         Map<String, Quantity> requests = combineResources(parent, template, ResourceRequirements::getRequests);
         Map<String, Quantity> limits = combineResources(parent, template, ResourceRequirements::getLimits);
@@ -389,9 +389,6 @@ public class PodTemplateUtils {
         podTemplate.setYamlMergeStrategy(template.getYamlMergeStrategy());
         podTemplate.setInheritFrom(!Strings.isNullOrEmpty(template.getInheritFrom()) ?
                                    template.getInheritFrom() : parent.getInheritFrom());
-
-        podTemplate.setInstanceCap(template.getInstanceCap() != Integer.MAX_VALUE ?
-                                   template.getInstanceCap() : parent.getInstanceCap());
 
         podTemplate.setSlaveConnectTimeout(template.getSlaveConnectTimeout() != PodTemplate.DEFAULT_SLAVE_JENKINS_CONNECTION_TIMEOUT ?
                                            template.getSlaveConnectTimeout() : parent.getSlaveConnectTimeout());
@@ -696,5 +693,9 @@ public class PodTemplateUtils {
         } else {
             return null;
         }
+    }
+
+    static boolean isListNullorEmpty(List<?> list) {
+        return (list == null || list.isEmpty());
     }
 }

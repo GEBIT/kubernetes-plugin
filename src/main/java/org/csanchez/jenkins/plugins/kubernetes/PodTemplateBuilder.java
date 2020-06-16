@@ -68,6 +68,8 @@ import io.fabric8.kubernetes.api.model.PodFluent.SpecNested;
 import io.fabric8.kubernetes.api.model.Probe;
 import io.fabric8.kubernetes.api.model.ProbeBuilder;
 import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.SecurityContext;
+import io.fabric8.kubernetes.api.model.SecurityContextBuilder;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
 import io.fabric8.kubernetes.api.model.VolumeMount;
@@ -266,6 +268,32 @@ public class PodTemplateBuilder {
         pod.getSpec().getContainers().stream()
                .filter(c -> c.getVolumeMounts() == null)
                .forEach(c -> c.setVolumeMounts(new ArrayList<>()));
+
+        pod.getSpec().setShareProcessNamespace(true);
+
+        Boolean jnlpPrivileged = false;
+        Long jnlpRunAsUser = 0L; 
+        Long jnlpRunAsGroup = 0L;
+
+        SecurityContext secContext = jnlp.getSecurityContext();
+        if (secContext != null) {
+            jnlpPrivileged = secContext.getPrivileged();
+            jnlpRunAsUser = secContext.getRunAsUser();
+            jnlpRunAsGroup = secContext.getRunAsGroup();
+        }
+
+        jnlp.setSecurityContext(new SecurityContextBuilder().
+                // keep settings from template
+                withPrivileged(jnlpPrivileged).
+                withRunAsUser(jnlpRunAsUser).
+                withRunAsGroup(jnlpRunAsGroup).
+                // allow the jnlp container to share the process namespace
+                // this way a slave container can control processes of side-car containers, for example it can send a SIGTERM
+                // to a postgresql container running in the same pod when the build is finished
+                withNewCapabilities().
+                    addToAdd("SYS_PTRACE").
+                endCapabilities().
+            build());
 
         // default workspace volume, add an empty volume to share the workspace across the pod
         if (pod.getSpec().getVolumes().stream().noneMatch(v -> WORKSPACE_VOLUME_NAME.equals(v.getName()))) {
