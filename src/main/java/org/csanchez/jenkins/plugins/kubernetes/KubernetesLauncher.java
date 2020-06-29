@@ -328,7 +328,7 @@ public class KubernetesLauncher extends JNLPLauncher {
             hostPath.setPath(hostPath.getPath() + "/" + namespace + "/" + jobName);
             LOGGER.log(FINE, "adjusted hostpath volume : {0}", hostPath);
         } else {
-            LOGGER.log(WARNING, "could not find hostpath volume to adjust : {0}", hostPath);
+            LOGGER.log(WARNING, "could not find workspace hostpath volume to adjust : {0}", hostPath);
         }
     }
 
@@ -336,9 +336,8 @@ public class KubernetesLauncher extends JNLPLauncher {
         List<Volume> volumes = pod.getSpec().getVolumes();
         for (Volume vol : volumes) {
             HostPathVolumeSource hostPath = vol.getHostPath();
-            if (vol.getName().equals("volume-0") && hostPath != null) {
-                // this is the first hostPath volume of the pod, it's the workspace volume
-                // by convention
+            if (vol.getName().equals(PodTemplateBuilder.WORKSPACE_VOLUME_NAME) && hostPath != null) {
+                // this is the hostPath workspace volume of the pod
                 LOGGER.log(FINE, "found job host path: {0}", hostPath);
                 return hostPath;
             }

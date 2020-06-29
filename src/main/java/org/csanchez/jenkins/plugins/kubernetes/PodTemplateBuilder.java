@@ -94,7 +94,7 @@ public class PodTemplateBuilder {
 
     private static final Pattern SPLIT_IN_SPACES = Pattern.compile("([^\"]\\S*|\".+?\")\\s*");
 
-    private static final String WORKSPACE_VOLUME_NAME = "workspace-volume";
+    public static final String WORKSPACE_VOLUME_NAME = "workspace-volume";
 
     @VisibleForTesting
     static final String DEFAULT_JNLP_IMAGE = System
@@ -304,7 +304,8 @@ public class PodTemplateBuilder {
         pod.getSpec().getContainers().stream()
                 .filter(c -> c.getVolumeMounts().stream()
                         .noneMatch(vm -> vm.getMountPath().equals(
-                                c.getWorkingDir() != null ? c.getWorkingDir() : ContainerTemplate.DEFAULT_WORKING_DIR)))
+                                (c.getWorkingDir() != null ? 
+                                        c.getWorkingDir() : ContainerTemplate.DEFAULT_WORKING_DIR) + "/" + ContainerTemplate.WORKSPACE_DIR_NAME)))
                 .forEach(c -> c.getVolumeMounts().add(getDefaultVolumeMount(c.getWorkingDir())));
 
         LOGGER.finest(() -> "Pod built: " + Serialization.asYaml(pod));
@@ -472,7 +473,8 @@ public class PodTemplateBuilder {
             wd = ContainerTemplate.DEFAULT_WORKING_DIR;
             LOGGER.log(Level.FINE, "Container workingDir is null, defaulting to {0}", wd);
         }
-        return new VolumeMountBuilder().withMountPath(wd).withName(WORKSPACE_VOLUME_NAME).withReadOnly(false).build();
+        return new VolumeMountBuilder().withMountPath(
+                wd + "/" + ContainerTemplate.WORKSPACE_DIR_NAME).withName(WORKSPACE_VOLUME_NAME).withReadOnly(false).build();
     }
 
     private List<VolumeMount> getContainerVolumeMounts(Collection<VolumeMount> volumeMounts, String workingDir) {
