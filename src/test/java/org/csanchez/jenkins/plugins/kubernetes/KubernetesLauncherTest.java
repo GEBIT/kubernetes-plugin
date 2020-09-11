@@ -5,10 +5,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 
 import java.io.IOException;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.UnrecoverableKeyException;
-import java.security.cert.CertificateEncodingException;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
@@ -27,7 +23,6 @@ import io.fabric8.kubernetes.api.model.DoneablePod;
 import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.EnvVarBuilder;
 import io.fabric8.kubernetes.api.model.HostPathVolumeSource;
-import io.fabric8.kubernetes.api.model.PersistentVolumeClaimVolumeSource;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
@@ -159,8 +154,8 @@ public class KubernetesLauncherTest {
 
         assertEquals("Pod has wrong JOB_NAME_LABEL", pod.getMetadata().getLabels().get(KubernetesLauncher.JOB_NAME_LABEL), cloudProject.getName());
 
-        EnvVar expectedFullJobName = new EnvVarBuilder().withName("WORKSPACE_PATH").withValue("cloud-project/").build();
-        assertEquals("Container has wrong WORKSPACE_PATH", expectedFullJobName, pod.getSpec().getContainers().get(0).getEnv().get(0));
+        EnvVar expectedFullJobName = new EnvVarBuilder().withName(KubernetesLauncher.GEBIT_BUILD_CLUSTER_WORKSPACE_PATH).withValue("cloud-project/").build();
+        assertEquals("Container has wrong GEBIT_BUILD_CLUSTER_WORKSPACE_PATH", expectedFullJobName, pod.getSpec().getContainers().get(0).getEnv().get(0));
 
         // expect the hostpath volume path to be extended by the namespace and the job name
         String expectedHostPath = "/var/test/path/" + namespace + "/" + cloudProject.getName();
