@@ -40,7 +40,7 @@ public class KubernetesPendingDecCloudProvisioningListener extends CloudProvisio
 
         try {
             limiter.acquireLock();
-            limiter.decPending(node.getTemplate());
+            limiter.decPending(kubernetesCloud.getUnwrappedTemplate(node.getTemplate()));
         } catch (InterruptedException | IOException | KubernetesAuthException e) {
             LOGGER.log(Level.SEVERE, "error acquiring lock for global config map", e);
             throw new IllegalStateException("error acquiring lock for global config map", e);

@@ -514,7 +514,7 @@ public class KubernetesCloud extends Cloud {
             }
 
             limiter.acquireLock();
-            int currentlySchedulablePods = limiter.estimateNumSchedulablePods(getTemplate(label));
+            int currentlySchedulablePods = limiter.estimateNumSchedulablePods(getUnwrappedTemplate(getTemplate(label)));
 
             int toBeProvisioned = Math.max(0, Math.min(currentlySchedulablePods, excessWorkload));
             LOGGER.log(Level.INFO, "provision request: label: {0}, currentlySchedulablePods: {1}, toBeProvisioned: {2}",
@@ -526,6 +526,7 @@ public class KubernetesCloud extends Cloud {
             }
 
             for (PodTemplate t: getTemplatesFor(label)) {
+                t = getUnwrappedTemplate(t);
                 LOGGER.log(Level.FINE, "Template for label {0}: {1}", new Object[] { label, t.getDisplayName() });
                 for (int i = 0; i < toBeProvisioned; i++) {
                     limiter.incPending(t);

@@ -380,15 +380,34 @@ public class KubernetesLauncher extends JNLPLauncher {
         return nodeId;
     }
 
+    private String getNodeDisplayName(BuildableItem buildable) {
+        String nodeDisplayName = "unknownNodeDisplayName";
+        FlowNode node = null;
+        try {
+            node = ((ExecutorStepExecution.PlaceholderTask) buildable.task).getNode();
+            if (node != null) {
+                nodeDisplayName = node.getDisplayName();
+            }
+        } catch (IOException | InterruptedException e) {
+            // ignore
+        }
+        return nodeDisplayName;
+    }
+
     String calcPodLabel(BuildableItem buildable) {
         String[] urlParts = buildable.task.getUrl().split("/");
         String podLabel = null;
+        String nodeId = null;
         if (isPipelineJob(buildable)) {
-            podLabel = urlParts[urlParts.length - 2] + "-" + getNodeId(buildable);
+            nodeId = getNodeId(buildable);
+            podLabel = urlParts[urlParts.length - 2] + "-" + nodeId;
         } else {
             podLabel = urlParts[urlParts.length - 1];
         }
-        return KubernetesResourceUtil.sanitizeName(podLabel);
+        podLabel = KubernetesResourceUtil.sanitizeName(podLabel);
+        LOGGER.log(FINE, "calcPodLabel sees url {0}, nodeId: {1}, nodeDisplayName: {2}, calculated podLabel: {3}",
+                new Object[] {buildable.task.getUrl(), nodeId, getNodeDisplayName(buildable), podLabel});
+        return podLabel;
     }
 
     Container findJnlpContainer(List<Container> containers) {
