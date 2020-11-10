@@ -57,7 +57,8 @@ public class PodTemplateStep extends Step implements Serializable {
 
     @CheckForNull
     private WorkspaceVolume workspaceVolume;
-
+    private Boolean mountWorkspace;
+    
     private List<PodAnnotation> annotations = new ArrayList<>();
     private List<String> imagePullSecrets = new ArrayList<>();
 
@@ -201,6 +202,15 @@ public class PodTemplateStep extends Step implements Serializable {
     @DataBoundSetter
     public void setWorkspaceVolume(@CheckForNull WorkspaceVolume workspaceVolume) {
         this.workspaceVolume = (workspaceVolume == null || workspaceVolume.equals(DescriptorImpl.defaultWorkspaceVolume)) ? null : workspaceVolume;
+    }
+
+    public Boolean getMountWorkspace() {
+        return mountWorkspace;
+    }
+
+    @DataBoundSetter
+    public void setMountWorkspace(boolean mountWorkspace) {
+        this.mountWorkspace = mountWorkspace;
     }
 
     public Integer getInstanceCap() {

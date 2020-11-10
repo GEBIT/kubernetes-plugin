@@ -10,6 +10,7 @@ import static org.mockito.Mockito.*;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -173,6 +174,28 @@ public class PodTemplateBuilderTest {
         assertEquals(volumeMounts, container0.getVolumeMounts());
         assertEquals(volumeMounts, container1.getVolumeMounts());
         assertEquals("Memory", pod.getSpec().getVolumes().get(0).getEmptyDir().getMedium());
+    }
+
+    @Test
+    public void testBuildWithNoWorkspaceMount() throws Exception {
+        PodTemplate template = new PodTemplate();
+        template.setMountWorkspace(false);
+        ContainerTemplate containerTemplate = new ContainerTemplate("name", "image");
+        containerTemplate.setWorkingDir("");
+        template.getContainers().add(containerTemplate);
+        setupStubs();
+        Pod pod = new PodTemplateBuilder(template).withSlave(slave).build();
+        List<Container> containers = pod.getSpec().getContainers();
+        assertEquals(2, containers.size());
+        Container container0 = containers.get(0);
+        Container container1 = containers.get(1);
+
+        List<VolumeMount> volumeMounts = Collections.emptyList();
+        List<Volume> volumes = Collections.emptyList();
+
+        assertEquals(volumeMounts, container0.getVolumeMounts());
+        assertEquals(volumeMounts, container1.getVolumeMounts());
+        assertEquals(volumes, pod.getSpec().getVolumes());
     }
 
     @Test

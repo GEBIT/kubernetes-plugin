@@ -51,6 +51,7 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
     private String yamlFile;
     private YamlMergeStrategy yamlMergeStrategy;
     private WorkspaceVolume workspaceVolume;
+    private Boolean mountWorkspace;
     private String supplementalGroups;
 
     @DataBoundConstructor
@@ -238,6 +239,15 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
         this.workspaceVolume = workspaceVolume;
     }
 
+    public boolean getMountWorkspace() {
+        return mountWorkspace;
+    }
+
+    @DataBoundSetter
+    public void setMountWorkspace(Boolean mountWorkspace) {
+        this.mountWorkspace = mountWorkspace;
+    }
+
     @DataBoundSetter
     public void setSupplementalGroups(String supplementalGroups) {
         this.supplementalGroups = supplementalGroups;
@@ -274,6 +284,9 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
         }
         if (workspaceVolume != null) {
             argMap.put("workspaceVolume", workspaceVolume);
+        }
+        if (mountWorkspace != null) {
+            argMap.put("mountWorkspace", mountWorkspace);
         }
         if (!StringUtils.isEmpty(cloud)) {
             argMap.put("cloud", cloud);

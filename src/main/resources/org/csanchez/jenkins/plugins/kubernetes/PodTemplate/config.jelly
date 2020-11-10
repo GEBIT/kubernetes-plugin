@@ -107,6 +107,10 @@
       <f:textbox/>
     </f:entry>
 
+    <f:entry field="mountWorkspace" title="${%Mount Workspace}">
+      <f:checkbox default="true"/>
+    </f:entry>
+
     <f:entry title="${%Workspace Volume}" description="${%Volume to use for sharing the workspace}">
       <f:dropdownDescriptorSelector field="workspaceVolume" default="${descriptor.defaultWorkspaceVolume}"/>
     </f:entry>

@@ -71,7 +71,6 @@ import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.SecurityContext;
 import io.fabric8.kubernetes.api.model.SecurityContextBuilder;
 import io.fabric8.kubernetes.api.model.Volume;
-import io.fabric8.kubernetes.api.model.VolumeBuilder;
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import io.fabric8.kubernetes.api.model.VolumeMountBuilder;
 import io.fabric8.kubernetes.client.utils.Serialization;
@@ -150,13 +149,15 @@ public class PodTemplateBuilder {
             }
         }
 
-        volumes.put(WORKSPACE_VOLUME_NAME, template.getWorkspaceVolume().buildVolume(WORKSPACE_VOLUME_NAME, slave != null ? slave.getPodName() : null));
+        if (template.getMountWorkspace()) {
+            volumes.put(WORKSPACE_VOLUME_NAME, template.getWorkspaceVolume().buildVolume(WORKSPACE_VOLUME_NAME, slave != null ? slave.getPodName() : null));
+        }
 
         Map<String, Container> containers = new HashMap<>();
         // containers from pod template
         for (ContainerTemplate containerTemplate : template.getContainers()) {
             containers.put(containerTemplate.getName(),
-                    createContainer(containerTemplate, template.getEnvVars(), volumeMounts.values()));
+                    createContainer(containerTemplate, template.getEnvVars(), volumeMounts.values(), template.getMountWorkspace()));
         }
 
         MetadataNested<PodBuilder> metadataBuilder = new PodBuilder().withNewMetadata();
@@ -295,18 +296,15 @@ public class PodTemplateBuilder {
                 endCapabilities().
             build());
 
-        // default workspace volume, add an empty volume to share the workspace across the pod
-        if (pod.getSpec().getVolumes().stream().noneMatch(v -> WORKSPACE_VOLUME_NAME.equals(v.getName()))) {
-            pod.getSpec().getVolumes()
-                    .add(new VolumeBuilder().withName(WORKSPACE_VOLUME_NAME).withNewEmptyDir().endEmptyDir().build());
-        }
         // default workspace volume mount. If something is already mounted in the same path ignore it
-        pod.getSpec().getContainers().stream()
-                .filter(c -> c.getVolumeMounts().stream()
-                        .noneMatch(vm -> vm.getMountPath().equals(
-                                (c.getWorkingDir() != null ? 
-                                        c.getWorkingDir() : ContainerTemplate.DEFAULT_WORKING_DIR) + "/" + ContainerTemplate.WORKSPACE_DIR_NAME)))
-                .forEach(c -> c.getVolumeMounts().add(getDefaultVolumeMount(c.getWorkingDir())));
+        if (template.getMountWorkspace()) { 
+            pod.getSpec().getContainers().stream()
+                    .filter(c -> c.getVolumeMounts().stream()
+                            .noneMatch(vm -> vm.getMountPath().equals(
+                                    (c.getWorkingDir() != null ? 
+                                            c.getWorkingDir() : ContainerTemplate.DEFAULT_WORKING_DIR) + "/" + ContainerTemplate.WORKSPACE_DIR_NAME)))
+                    .forEach(c -> c.getVolumeMounts().add(getDefaultVolumeMount(c.getWorkingDir())));
+        }
 
         LOGGER.finest(() -> "Pod built: " + Serialization.asYaml(pod));
         return pod;
@@ -398,7 +396,7 @@ public class PodTemplateBuilder {
     }
 
     private Container createContainer(ContainerTemplate containerTemplate, Collection<TemplateEnvVar> globalEnvVars,
-            Collection<VolumeMount> volumeMounts) {
+            Collection<VolumeMount> volumeMounts, boolean mountWorkspace) {
         Map<String, EnvVar> envVarsMap = new HashMap<>();
         String workingDir = substituteEnv(containerTemplate.getWorkingDir());
         if (JNLP_NAME.equals(containerTemplate.getName())) {
@@ -428,7 +426,7 @@ public class PodTemplateBuilder {
         ContainerPort[] ports = containerTemplate.getPorts().stream().map(entry -> entry.toPort()).toArray(size -> new ContainerPort[size]);
 
 
-        List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, workingDir);
+        List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, workingDir, mountWorkspace);
 
         ContainerLivenessProbe clp = containerTemplate.getLivenessProbe();
         Probe livenessProbe = null;
@@ -477,9 +475,9 @@ public class PodTemplateBuilder {
                 wd + "/" + ContainerTemplate.WORKSPACE_DIR_NAME).withName(WORKSPACE_VOLUME_NAME).withReadOnly(false).build();
     }
 
-    private List<VolumeMount> getContainerVolumeMounts(Collection<VolumeMount> volumeMounts, String workingDir) {
+    private List<VolumeMount> getContainerVolumeMounts(Collection<VolumeMount> volumeMounts, String workingDir, boolean mountWorkspace) {
         List<VolumeMount> containerMounts = new ArrayList<>(volumeMounts);
-        if (!Strings.isNullOrEmpty(workingDir) && !PodVolume.volumeMountExists(workingDir, volumeMounts)) {
+        if (!Strings.isNullOrEmpty(workingDir) && !PodVolume.volumeMountExists(workingDir, volumeMounts) && mountWorkspace) {
             containerMounts.add(getDefaultVolumeMount(workingDir));
         }
         return containerMounts;

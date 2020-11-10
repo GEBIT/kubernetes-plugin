@@ -171,8 +171,9 @@ public class KubernetesLauncher extends JNLPLauncher {
                 //set the label string early, so that Jenkins can provision for other jobs earlier
                 slave.setLabelString(podLabel);
             }
+
             // adjust pod dynamically to the job that gets scheduled to it
-            adjustPodToBuildable(pod, buildable, namespace);
+            adjustPodToBuildable(pod, buildable, namespace, template.getMountWorkspace());
 
             LOGGER.log(Level.FINE, "Creating Pod: {0} in namespace {1}", new Object[]{podName, namespace});
             pod = client.pods().inNamespace(namespace).create(pod);
@@ -182,7 +183,9 @@ public class KubernetesLauncher extends JNLPLauncher {
             TaskListener runListener = template.getListener();
             runListener.getLogger().printf("Created Pod: %s/%s%n", namespace, podName);
 
-            template.getWorkspaceVolume().createVolume(client, pod.getMetadata());
+            if (template.getMountWorkspace()) {
+                template.getWorkspaceVolume().createVolume(client, pod.getMetadata());
+            }
             watcher = new AllContainersRunningPodWatcher(client, pod, runListener);
             try (Watch w1 = client.pods().inNamespace(namespace).withName(podName).watch(watcher);
                  Watch w2 = eventWatch(client, podName, namespace, runListener)) {
@@ -306,7 +309,7 @@ public class KubernetesLauncher extends JNLPLauncher {
         return null;
     }
 
-    void adjustPodToBuildable(Pod pod, BuildableItem buildable, String namespace) {
+    void adjustPodToBuildable(Pod pod, BuildableItem buildable, String namespace, boolean mountWorkspace) {
         String podLabel = calcPodLabel(buildable);
         String workspacePath = calcWorkspacePath(buildable);
         String[] workspaceParts = workspacePath.split("/");
@@ -322,7 +325,9 @@ public class KubernetesLauncher extends JNLPLauncher {
             jnlp.getEnv().add(new EnvVarBuilder().withName(GEBIT_BUILD_CLUSTER_WORKSPACE_PATH).withValue(workspacePath).build());
             jnlp.getEnv().add(new EnvVarBuilder().withName(GEBIT_BUILD_CLUSTER_IS_PIPELINE_JOB).withValue(Boolean.toString(isPipelineJob(buildable))).build());
             // adjust the workspace directory on the host to contain a directory for the namespace and the job name
-            adjustWorkspaceVolume(pod, jobName, namespace);
+            if (mountWorkspace) {
+                adjustWorkspaceVolume(pod, jobName, namespace);
+            }
         } else {
             LOGGER.log(WARNING, "could not find jnlp container volume to adjust : {0}", pod);
         }
@@ -398,7 +403,9 @@ public class KubernetesLauncher extends JNLPLauncher {
         String[] urlParts = buildable.task.getUrl().split("/");
         String podLabel = null;
         String nodeId = null;
+        String nodeDisplayName = null;
         if (isPipelineJob(buildable)) {
+            nodeDisplayName = getNodeDisplayName(buildable);
             nodeId = getNodeId(buildable);
             podLabel = urlParts[urlParts.length - 2] + "-" + nodeId;
         } else {
@@ -406,7 +413,7 @@ public class KubernetesLauncher extends JNLPLauncher {
         }
         podLabel = KubernetesResourceUtil.sanitizeName(podLabel);
         LOGGER.log(FINE, "calcPodLabel sees url {0}, nodeId: {1}, nodeDisplayName: {2}, calculated podLabel: {3}",
-                new Object[] {buildable.task.getUrl(), nodeId, getNodeDisplayName(buildable), podLabel});
+                new Object[] {buildable.task.getUrl(), nodeId, nodeDisplayName, podLabel});
         return podLabel;
     }
 

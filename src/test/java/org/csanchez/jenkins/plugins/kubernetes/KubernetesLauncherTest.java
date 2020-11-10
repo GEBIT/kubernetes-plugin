@@ -7,6 +7,7 @@ import static org.junit.Assert.assertNull;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.List;
 
 import org.jenkinsci.plugins.kubernetes.auth.KubernetesAuthException;
@@ -141,16 +142,16 @@ public class KubernetesLauncherTest {
         assertNull("There should be no buildable to provision for, because the labels don't match", launcher.findFirstBuildableToProvisionFor(createBuildableItemList(), "pos", "non-matching-label", cloud.connect()));
     }
 
-//    @Test
+    @Test
     public void testAdjustPodToBuildable() {
         Pod pod = KubernetesCloudLimiterTest.createTestPod("jnlp", "node1", "1", "2", "1Gi", "2Gi", "running", "cloud-project");
         // add a host path volume for adjusting (the workspace volume) 
-        pod.getSpec().getVolumes().add(new VolumeBuilder().withName("hostpath-volume").withHostPath(new HostPathVolumeSource("/var/test/path", "type")).build());
-        
+        pod.getSpec().getVolumes().add(new VolumeBuilder().withName(PodTemplateBuilder.WORKSPACE_VOLUME_NAME).withHostPath(new HostPathVolumeSource("/var/test/path", "type")).build());
+
         Queue.BuildableItem item = new Queue.BuildableItem(new Queue.WaitingItem(Calendar.getInstance(), cloudProject, new ArrayList<>()));
 
         String namespace = "pos";
-        launcher.adjustPodToBuildable(pod, item, namespace);
+        launcher.adjustPodToBuildable(pod, item, namespace, true);
 
         assertEquals("Pod has wrong JOB_NAME_LABEL", pod.getMetadata().getLabels().get(KubernetesLauncher.JOB_NAME_LABEL), cloudProject.getName());
 
@@ -160,7 +161,19 @@ public class KubernetesLauncherTest {
         // expect the hostpath volume path to be extended by the namespace and the job name
         String expectedHostPath = "/var/test/path/" + namespace + "/" + cloudProject.getName();
         assertEquals("Pod has wrong hostPath volume path", expectedHostPath, pod.getSpec().getVolumes().get(0).getHostPath().getPath());
+    }
 
+    @Test
+    public void testAdjustPodToBuildableNoWorkspaceMount() {
+        Pod pod = KubernetesCloudLimiterTest.createTestPod("jnlp", "node1", "1", "2", "1Gi", "2Gi", "running", "cloud-project");
+
+        Queue.BuildableItem item = new Queue.BuildableItem(new Queue.WaitingItem(Calendar.getInstance(), cloudProject, new ArrayList<>()));
+
+        String namespace = "pos";
+        launcher.adjustPodToBuildable(pod, item, namespace, false);
+
+        // expect no hostPath volume to be defined in the pod
+        assertEquals("Pod has hostPath hostpath volume", Collections.emptyList(), pod.getSpec().getVolumes());
     }
 }
 

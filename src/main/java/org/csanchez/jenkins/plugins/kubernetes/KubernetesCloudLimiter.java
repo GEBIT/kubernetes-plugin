@@ -223,7 +223,12 @@ public class KubernetesCloudLimiter {
         // how much is available for the whole cluster
         int availableCpu = allocatableCpu - usedCpu - pendingCpu;
 
-        return (availableCpu / cpuRequest);
+        int result = (availableCpu / cpuRequest);
+
+        LOGGER.log(Level.FINER, "PodTemplate {0} CPU request: {1}, nodeAllocatableCpu: {2}, nodeUsedCpu: {3}, nodePendingCpu: {4}, nodeAvailableCpu: {5}, estimateByCpu: {6}",
+                new Object[] {pod.getMetadata().getName(), cpuRequest, allocatableCpu, usedCpu, pendingCpu, availableCpu, result});
+
+        return result;
     }
 
     public int estimateByMem(Pod pod) throws KubernetesAuthException, IOException {
@@ -244,7 +249,12 @@ public class KubernetesCloudLimiter {
         // how much is available for the whole cluster
         int availableMem = allocatableMem - usedMem - pendingMem;
 
-        return (availableMem / memRequest);
+        int result = (availableMem / memRequest);
+
+        LOGGER.log(Level.FINER, "PodTemplate {0} MEM request: {1}, nodeAllocatableMem: {2}, nodeUsedMem: {3}, nodePendingMem: {4}, nodeAvailableMem: {5}, estimateByMem: {6}",
+                new Object[] {pod.getMetadata().getName(), memRequest, allocatableMem, usedMem, pendingMem, availableMem, result});
+
+        return result;
     }
 
     int getPodCpuRequestMillis(Pod pod) {

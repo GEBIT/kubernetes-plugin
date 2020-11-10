@@ -84,8 +84,6 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
 
     private String supplementalGroups;
 
-    private boolean capOnlyOnAlivePods;
-
     private boolean alwaysPullImage;
 
     private String command;
@@ -119,6 +117,8 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
     private Boolean hostNetwork;
 
     private WorkspaceVolume workspaceVolume = WorkspaceVolume.getDefault();
+    
+    private boolean mountWorkspace = true;
 
     private final List<PodVolume> volumes = new ArrayList<PodVolume>();
 
@@ -630,6 +630,16 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
     @DataBoundSetter
     public void setWorkspaceVolume(WorkspaceVolume workspaceVolume) {
         this.workspaceVolume = workspaceVolume;
+    }
+
+    @Nonnull
+    public boolean getMountWorkspace() {
+        return mountWorkspace;
+    }
+
+    @DataBoundSetter
+    public void setMountWorkspace(Boolean mountWorkspace) {
+        this.mountWorkspace = mountWorkspace;
     }
 
     @DataBoundSetter
