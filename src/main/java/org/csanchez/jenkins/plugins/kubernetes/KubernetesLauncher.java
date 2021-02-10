@@ -24,7 +24,9 @@
 
 package org.csanchez.jenkins.plugins.kubernetes;
 
-import static java.util.logging.Level.*;
+import static java.util.logging.Level.FINE;
+import static java.util.logging.Level.INFO;
+import static java.util.logging.Level.WARNING;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -39,11 +41,6 @@ import java.util.stream.Collectors;
 
 import javax.annotation.CheckForNull;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import hudson.model.Label;
-import hudson.model.Queue;
-import io.fabric8.kubernetes.client.KubernetesClientException;
-import jenkins.model.Jenkins;
 import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.plugins.workflow.graph.FlowNode;
 import org.jenkinsci.plugins.workflow.support.steps.ExecutorStepExecution;
@@ -53,6 +50,10 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 
 import antlr.ANTLRException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import hudson.model.Item;
+import hudson.model.Label;
+import hudson.model.Queue;
 import hudson.model.TaskListener;
 import hudson.model.Queue.BuildableItem;
 import hudson.model.Queue.NotWaitingItem;
@@ -62,16 +63,14 @@ import hudson.slaves.SlaveComputer;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerStatus;
 import io.fabric8.kubernetes.api.model.EnvVarBuilder;
-import io.fabric8.kubernetes.api.model.HostPathVolumeSource;
 import io.fabric8.kubernetes.api.model.Pod;
-import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.dsl.LogWatch;
 import io.fabric8.kubernetes.client.dsl.PrettyLoggable;
 import io.fabric8.kubernetes.client.utils.KubernetesResourceUtil;
-
-import static java.util.logging.Level.INFO;
+import jenkins.model.Jenkins;
 
 /**
  * Launches on Kubernetes the specified {@link KubernetesComputer} instance.
@@ -81,6 +80,7 @@ public class KubernetesLauncher extends JNLPLauncher {
     private static final String GEBIT_BUILD_CLUSTER_IS_PIPELINE_JOB = "GEBIT_BUILD_CLUSTER_IS_PIPELINE_JOB";
     //VisibleForTesting
     static final String GEBIT_BUILD_CLUSTER_WORKSPACE_PATH = "GEBIT_BUILD_CLUSTER_WORKSPACE_PATH";
+    static final String JOB_NAME_LABEL = "job-name";
 
     // Report progress every 30 seconds
     private static final long REPORT_INTERVAL = TimeUnit.SECONDS.toMillis(30L);
@@ -89,9 +89,6 @@ public class KubernetesLauncher extends JNLPLauncher {
     private transient AllContainersRunningPodWatcher watcher;
 
     private static final Logger LOGGER = Logger.getLogger(KubernetesLauncher.class.getName());
-
-    static final String JOB_NAME_LABEL = "job-name";
-    private static final String PIPELINE_JOB_URL_SUFFIX = "/[0-9]+/$";
 
     private boolean launched;
 
@@ -166,14 +163,8 @@ public class KubernetesLauncher extends JNLPLauncher {
                 throw new IllegalStateException("No unprovisioned job found in queue");
             }
 
-            String podLabel = calcPodLabel(buildable);
-            if (!isPipelineJob(buildable)) {
-                //set the label string early, so that Jenkins can provision for other jobs earlier
-                slave.setLabelString(podLabel);
-            }
-
             // adjust pod dynamically to the job that gets scheduled to it
-            adjustPodToBuildable(pod, buildable, namespace, template.getMountWorkspace());
+            addPodLabeAndlJnlpEnvVars(pod, buildable, namespace);
 
             LOGGER.log(Level.FINE, "Creating Pod: {0} in namespace {1}", new Object[]{podName, namespace});
             pod = client.pods().inNamespace(namespace).create(pod);
@@ -297,7 +288,7 @@ public class KubernetesLauncher extends JNLPLauncher {
                         .isEmpty()) {
                     LOGGER.log(Level.FINEST, "buildable {0} has no other active pod running", podLabel);
                     //no other active pod exists for this job
-                    Label labelExpression = parseLabelExpression(buildable.task.getAssignedLabel().getExpression());
+                    Label labelExpression = parseLabelExpression(buildable.getAssignedLabel().getExpression());
                     if (labelExpression != null && labelExpression.matches(templateLabelSet)) {
                         //the template label satisfies the job's label expression, provision
                         LOGGER.log(Level.FINE, "buildable {0} has all criteria true, provision!", podLabel);
@@ -309,12 +300,10 @@ public class KubernetesLauncher extends JNLPLauncher {
         return null;
     }
 
-    void adjustPodToBuildable(Pod pod, BuildableItem buildable, String namespace, boolean mountWorkspace) {
+    void addPodLabeAndlJnlpEnvVars(Pod pod, BuildableItem buildable, String namespace) {
         String podLabel = calcPodLabel(buildable);
         String workspacePath = calcWorkspacePath(buildable);
-        String[] workspaceParts = workspacePath.split("/");
-        String jobName = workspaceParts[workspaceParts.length - 1];
-        LOGGER.log(INFO, "podLabel : {0}, workspacePath: {1}, jobName: {2}", new Object[] {podLabel, workspacePath, jobName});
+        LOGGER.log(INFO, "podLabel : {0}, workspacePath: {1}", new Object[] {podLabel, workspacePath});
 
         // label pod with job name
         pod.getMetadata().getLabels().put(JOB_NAME_LABEL, podLabel);
@@ -324,51 +313,38 @@ public class KubernetesLauncher extends JNLPLauncher {
             // add full job name as environment variable for script inside the agent container
             jnlp.getEnv().add(new EnvVarBuilder().withName(GEBIT_BUILD_CLUSTER_WORKSPACE_PATH).withValue(workspacePath).build());
             jnlp.getEnv().add(new EnvVarBuilder().withName(GEBIT_BUILD_CLUSTER_IS_PIPELINE_JOB).withValue(Boolean.toString(isPipelineJob(buildable))).build());
-            // adjust the workspace directory on the host to contain a directory for the namespace and the job name
-            if (mountWorkspace) {
-                adjustWorkspaceVolume(pod, jobName, namespace);
-            }
         } else {
-            LOGGER.log(WARNING, "could not find jnlp container volume to adjust : {0}", pod);
+            LOGGER.log(WARNING, "could not find jnlp container to adjust : {0}", pod);
         }
     }
 
-    void adjustWorkspaceVolume(Pod pod, String jobName, String namespace) {
-        // find the HostPath workspace volume
-        HostPathVolumeSource hostPath = findWorkspaceVolumeSource(pod);
-        if (hostPath != null) {
-            // adjust HostPath workspace volume for specific job
-            hostPath.setPath(hostPath.getPath() + "/" + namespace + "/" + jobName);
-            LOGGER.log(FINE, "adjusted hostpath volume : {0}", hostPath);
-        } else {
-            LOGGER.log(WARNING, "could not find workspace hostpath volume to adjust : {0}", hostPath);
-        }
+    boolean isMavenModuleSet(BuildableItem buildable) {
+        return buildable.task.getClass().getSimpleName().equals("MavenModuleSet");
     }
-
-    HostPathVolumeSource findWorkspaceVolumeSource(Pod pod) {
-        List<Volume> volumes = pod.getSpec().getVolumes();
-        for (Volume vol : volumes) {
-            HostPathVolumeSource hostPath = vol.getHostPath();
-            if (vol.getName().equals(PodTemplateBuilder.WORKSPACE_VOLUME_NAME) && hostPath != null) {
-                // this is the hostPath workspace volume of the pod
-                LOGGER.log(FINE, "found job host path: {0}", hostPath);
-                return hostPath;
-            }
-        }
-        return null;
-    }
-
+    
     boolean isPipelineJob(BuildableItem buildable) {
         return buildable.task instanceof ExecutorStepExecution.PlaceholderTask;
     }
 
+    boolean isMatrixJob(BuildableItem buildable) {
+        return buildable.task.getClass().getSimpleName().equals("MatrixConfiguration");
+    }
+
     String calcWorkspacePath(BuildableItem buildable) {
-        String name = buildable.task.getUrl().replace("job/", "");
-        if (isPipelineJob(buildable)) {
-            // this is a PipelineJob, adjust name further
-            name = name.replaceFirst(PIPELINE_JOB_URL_SUFFIX, "");
+        String workspacePath = null;
+        if (isMavenModuleSet(buildable)){
+            workspacePath = ((Item) buildable.task).getFullName();
+        } else if (isPipelineJob(buildable)) {
+            workspacePath = ((Item) buildable.task.getOwnerTask()).getFullName();
+        } else if (isMatrixJob(buildable)) {
+            workspacePath = ((Item) buildable.task).getFullName().replace("=", "/");
+        } else {
+            LOGGER.log(Level.SEVERE, "unable to calculate workspacePath for buildable: {0}", new Object[]{buildable});
+            throw new IllegalStateException("unable to calculate workspacePath for buildable: " + buildable);
         }
-        return name;
+
+        LOGGER.log(Level.FINE, "Calculated workspacePath: {0} for buildable.task: {1}", new Object[]{workspacePath, buildable.task});
+        return workspacePath;
     }
 
     private String getNodeId(BuildableItem buildable) {
@@ -385,35 +361,24 @@ public class KubernetesLauncher extends JNLPLauncher {
         return nodeId;
     }
 
-    private String getNodeDisplayName(BuildableItem buildable) {
-        String nodeDisplayName = "unknownNodeDisplayName";
-        FlowNode node = null;
-        try {
-            node = ((ExecutorStepExecution.PlaceholderTask) buildable.task).getNode();
-            if (node != null) {
-                nodeDisplayName = node.getDisplayName();
-            }
-        } catch (IOException | InterruptedException e) {
-            // ignore
-        }
-        return nodeDisplayName;
-    }
-
     String calcPodLabel(BuildableItem buildable) {
-        String[] urlParts = buildable.task.getUrl().split("/");
+        String workspacePath = calcWorkspacePath(buildable);
+        String[] workspaceParts = workspacePath.split("/");
         String podLabel = null;
-        String nodeId = null;
-        String nodeDisplayName = null;
-        if (isPipelineJob(buildable)) {
-            nodeDisplayName = getNodeDisplayName(buildable);
-            nodeId = getNodeId(buildable);
-            podLabel = urlParts[urlParts.length - 2] + "-" + nodeId;
+        if (isMavenModuleSet(buildable)) {
+            podLabel = workspaceParts[workspaceParts.length - 1];
+        } else if (isPipelineJob(buildable)) {
+            String nodeId = getNodeId(buildable);
+            podLabel = workspaceParts[workspaceParts.length - 1] + "-" + nodeId;
+        } else if (isMatrixJob(buildable)) {
+            podLabel = ((Item) buildable.task).getFullName();
         } else {
-            podLabel = urlParts[urlParts.length - 1];
+            LOGGER.log(Level.SEVERE, "unable to calculate podLabel for buildable: {0}", new Object[]{buildable});
+            throw new IllegalStateException("unable to calculate podLabel for buildable: " + buildable);
         }
         podLabel = KubernetesResourceUtil.sanitizeName(podLabel);
-        LOGGER.log(FINE, "calcPodLabel sees url {0}, nodeId: {1}, nodeDisplayName: {2}, calculated podLabel: {3}",
-                new Object[] {buildable.task.getUrl(), nodeId, nodeDisplayName, podLabel});
+
+        LOGGER.log(FINE, "Calculated podLabel {0} for buildable.task: {1}", new Object[] {podLabel, buildable});
         return podLabel;
     }
 
