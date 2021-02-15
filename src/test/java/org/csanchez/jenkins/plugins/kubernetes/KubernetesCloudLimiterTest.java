@@ -153,7 +153,6 @@ public class KubernetesCloudLimiterTest {
 
         Map<String, String> labels = new HashMap<>();
         labels.put("jenkins", "slave");
-        labels.put(KubernetesLauncher.JOB_NAME_LABEL, jobName);
 
         Pod pod = new PodBuilder().
                 withNewMetadata().

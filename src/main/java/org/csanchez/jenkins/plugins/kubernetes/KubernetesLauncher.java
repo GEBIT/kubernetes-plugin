@@ -24,16 +24,13 @@
 
 package org.csanchez.jenkins.plugins.kubernetes;
 
-import static java.util.logging.Level.FINE;
 import static java.util.logging.Level.INFO;
-import static java.util.logging.Level.WARNING;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -42,45 +39,28 @@ import java.util.stream.Collectors;
 import javax.annotation.CheckForNull;
 
 import org.apache.commons.lang.StringUtils;
-import org.jenkinsci.plugins.workflow.graph.FlowNode;
-import org.jenkinsci.plugins.workflow.support.steps.ExecutorStepExecution;
 import org.kohsuke.stapler.DataBoundConstructor;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 
-import antlr.ANTLRException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import hudson.model.Item;
-import hudson.model.Label;
-import hudson.model.Queue;
 import hudson.model.TaskListener;
-import hudson.model.Queue.BuildableItem;
-import hudson.model.Queue.NotWaitingItem;
-import hudson.model.labels.LabelAtom;
 import hudson.slaves.JNLPLauncher;
 import hudson.slaves.SlaveComputer;
-import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerStatus;
-import io.fabric8.kubernetes.api.model.EnvVarBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.dsl.LogWatch;
 import io.fabric8.kubernetes.client.dsl.PrettyLoggable;
-import io.fabric8.kubernetes.client.utils.KubernetesResourceUtil;
 import jenkins.model.Jenkins;
 
 /**
  * Launches on Kubernetes the specified {@link KubernetesComputer} instance.
  */
 public class KubernetesLauncher extends JNLPLauncher {
-
-    private static final String GEBIT_BUILD_CLUSTER_IS_PIPELINE_JOB = "GEBIT_BUILD_CLUSTER_IS_PIPELINE_JOB";
-    //VisibleForTesting
-    static final String GEBIT_BUILD_CLUSTER_WORKSPACE_PATH = "GEBIT_BUILD_CLUSTER_WORKSPACE_PATH";
-    static final String JOB_NAME_LABEL = "job-name";
 
     // Report progress every 30 seconds
     private static final long REPORT_INTERVAL = TimeUnit.SECONDS.toMillis(30L);
@@ -147,24 +127,6 @@ public class KubernetesLauncher extends JNLPLauncher {
                     template.getNamespace(), client.getNamespace()) //
                     .stream().filter(s -> StringUtils.isNotBlank(s)).findFirst().orElse(null);
             slave.setNamespace(namespace);
-
-            // get current buildable item from the global build queue and provision for it
-            Queue queue = Jenkins.get().getQueue();
-            List<BuildableItem> buildables = queue.getBuildableItems();
-
-            // KubernetesLauncher.launch() gets called concurrently
-            // ensure that checking for the first unprovisioned job and creating a pod for it
-            // is done atomically
-
-            BuildableItem buildable = findFirstBuildableToProvisionFor(buildables, namespace,
-                    template.getLabel(), client);
-            if (buildable == null) {
-                // we must throw an exception here, a simple return leads to a zombie slave
-                throw new IllegalStateException("No unprovisioned job found in queue");
-            }
-
-            // adjust pod dynamically to the job that gets scheduled to it
-            addPodLabeAndlJnlpEnvVars(pod, buildable, namespace);
 
             LOGGER.log(Level.FINE, "Creating Pod: {0} in namespace {1}", new Object[]{podName, namespace});
             pod = client.pods().inNamespace(namespace).create(pod);
@@ -267,138 +229,6 @@ public class KubernetesLauncher extends JNLPLauncher {
             }
             throw Throwables.propagate(ex);
         }
-    }
-
-    BuildableItem findFirstBuildableToProvisionFor(List<BuildableItem> buildables, String namespace,
-            String templateLabel, KubernetesClient client) {
-
-        Set<LabelAtom> templateLabelSet = Label.parse(templateLabel);
-
-        for (BuildableItem buildable : buildables) {
-            String podLabel = calcPodLabel(buildable);
-            LOGGER.log(Level.FINE, "checking if buildable {0} should be provisioned", podLabel);
-
-            if (buildable instanceof NotWaitingItem) {
-                //this item is not waiting
-                LOGGER.log(Level.FINEST, "buildable {0} is not waiting", podLabel);
-                if (KubernetesCloud.filterRunningOrPendingAgentPods(client.pods()
-                        .inNamespace(namespace)
-                        .withLabel(JOB_NAME_LABEL, podLabel)
-                        .list())
-                        .isEmpty()) {
-                    LOGGER.log(Level.FINEST, "buildable {0} has no other active pod running", podLabel);
-                    //no other active pod exists for this job
-                    Label labelExpression = parseLabelExpression(buildable.getAssignedLabel().getExpression());
-                    if (labelExpression != null && labelExpression.matches(templateLabelSet)) {
-                        //the template label satisfies the job's label expression, provision
-                        LOGGER.log(Level.FINE, "buildable {0} has all criteria true, provision!", podLabel);
-                        return buildable;
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    void addPodLabeAndlJnlpEnvVars(Pod pod, BuildableItem buildable, String namespace) {
-        String podLabel = calcPodLabel(buildable);
-        String workspacePath = calcWorkspacePath(buildable);
-        LOGGER.log(INFO, "podLabel : {0}, workspacePath: {1}", new Object[] {podLabel, workspacePath});
-
-        // label pod with job name
-        pod.getMetadata().getLabels().put(JOB_NAME_LABEL, podLabel);
-
-        Container jnlp = findJnlpContainer(pod.getSpec().getContainers());
-        if (jnlp != null) {
-            // add full job name as environment variable for script inside the agent container
-            jnlp.getEnv().add(new EnvVarBuilder().withName(GEBIT_BUILD_CLUSTER_WORKSPACE_PATH).withValue(workspacePath).build());
-            jnlp.getEnv().add(new EnvVarBuilder().withName(GEBIT_BUILD_CLUSTER_IS_PIPELINE_JOB).withValue(Boolean.toString(isPipelineJob(buildable))).build());
-        } else {
-            LOGGER.log(WARNING, "could not find jnlp container to adjust : {0}", pod);
-        }
-    }
-
-    boolean isMavenModuleSet(BuildableItem buildable) {
-        return buildable.task.getClass().getSimpleName().equals("MavenModuleSet");
-    }
-    
-    boolean isPipelineJob(BuildableItem buildable) {
-        return buildable.task instanceof ExecutorStepExecution.PlaceholderTask;
-    }
-
-    boolean isMatrixJob(BuildableItem buildable) {
-        return buildable.task.getClass().getSimpleName().equals("MatrixConfiguration");
-    }
-
-    String calcWorkspacePath(BuildableItem buildable) {
-        String workspacePath = null;
-        if (isMavenModuleSet(buildable)){
-            workspacePath = ((Item) buildable.task).getFullName();
-        } else if (isPipelineJob(buildable)) {
-            workspacePath = ((Item) buildable.task.getOwnerTask()).getFullName();
-        } else if (isMatrixJob(buildable)) {
-            workspacePath = ((Item) buildable.task).getFullName().replace("=", "/");
-        } else {
-            LOGGER.log(Level.SEVERE, "unable to calculate workspacePath for buildable: {0}", new Object[]{buildable});
-            throw new IllegalStateException("unable to calculate workspacePath for buildable: " + buildable);
-        }
-
-        LOGGER.log(Level.FINE, "Calculated workspacePath: {0} for buildable.task: {1}", new Object[]{workspacePath, buildable.task});
-        return workspacePath;
-    }
-
-    private String getNodeId(BuildableItem buildable) {
-        String nodeId = "unknownNodeId";
-        FlowNode node = null;
-        try {
-            node = ((ExecutorStepExecution.PlaceholderTask) buildable.task).getNode();
-            if (node != null) {
-                nodeId = node.getId();
-            }
-        } catch (IOException | InterruptedException e) {
-            // ignore
-        }
-        return nodeId;
-    }
-
-    String calcPodLabel(BuildableItem buildable) {
-        String workspacePath = calcWorkspacePath(buildable);
-        String[] workspaceParts = workspacePath.split("/");
-        String podLabel = null;
-        if (isMavenModuleSet(buildable)) {
-            podLabel = workspaceParts[workspaceParts.length - 1];
-        } else if (isPipelineJob(buildable)) {
-            String nodeId = getNodeId(buildable);
-            podLabel = workspaceParts[workspaceParts.length - 1] + "-" + nodeId;
-        } else if (isMatrixJob(buildable)) {
-            podLabel = ((Item) buildable.task).getFullName();
-        } else {
-            LOGGER.log(Level.SEVERE, "unable to calculate podLabel for buildable: {0}", new Object[]{buildable});
-            throw new IllegalStateException("unable to calculate podLabel for buildable: " + buildable);
-        }
-        podLabel = KubernetesResourceUtil.sanitizeName(podLabel);
-
-        LOGGER.log(FINE, "Calculated podLabel {0} for buildable.task: {1}", new Object[] {podLabel, buildable});
-        return podLabel;
-    }
-
-    Container findJnlpContainer(List<Container> containers) {
-        for (Container c : containers) {
-            if (c.getName().equals(KubernetesCloud.JNLP_NAME)) {
-                return c;
-            }
-        }
-        return null;
-    }
-
-    private Label parseLabelExpression(String labelString) {
-        Label result = null;
-        try {
-            result = Label.parseExpression(labelString);
-        } catch (ANTLRException e) {
-            LOGGER.log(Level.SEVERE, "error parsing label string {0}", labelString);
-        }
-        return result;
     }
 
     private Watch eventWatch(KubernetesClient client, String podName, String namespace, TaskListener runListener) {
