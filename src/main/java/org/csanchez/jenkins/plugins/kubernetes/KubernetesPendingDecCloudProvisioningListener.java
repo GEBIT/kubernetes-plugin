@@ -1,10 +1,6 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
 import java.io.IOException;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.UnrecoverableKeyException;
-import java.security.cert.CertificateEncodingException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -39,7 +35,9 @@ public class KubernetesPendingDecCloudProvisioningListener extends CloudProvisio
         KubernetesCloudLimiter limiter = kubernetesCloud.getLimiter();
 
         try {
-            limiter.acquireLock();
+            if (!limiter.acquireLock()) {
+                throw new IOException("unable to acquire lock for limiter");
+            }
             limiter.decPending(kubernetesCloud.getUnwrappedTemplate(node.getTemplate()));
         } catch (InterruptedException | IOException | KubernetesAuthException e) {
             LOGGER.log(Level.SEVERE, "error acquiring lock for global config map", e);

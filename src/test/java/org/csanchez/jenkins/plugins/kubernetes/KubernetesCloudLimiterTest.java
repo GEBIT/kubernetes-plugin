@@ -40,10 +40,10 @@ import io.fabric8.kubernetes.client.dsl.Resource;
 
 public class KubernetesCloudLimiterTest {
 
-    public static ConfigMap createTestConfigMap(boolean locked, int pendingCpuMillis, int pendingMemMi) {
+    public static ConfigMap createTestConfigMap(String lockedBy, int pendingCpuMillis, int pendingMemMi) {
         ConfigMap cm = new ConfigMap();
         Map<String, String> data = new HashMap<>();
-        data.put(KubernetesCloudLimiter.LOCKED, Boolean.toString(locked));
+        data.put(KubernetesCloudLimiter.LOCKED_BY, lockedBy);
         data.put(KubernetesCloudLimiter.PENDING_CPU_MILLIS, Integer.toString(pendingCpuMillis));
         data.put(KubernetesCloudLimiter.PENDING_MEM_MI, Integer.toString(pendingMemMi));
         cm.setData(data);
@@ -207,7 +207,7 @@ public class KubernetesCloudLimiterTest {
 
     @Test
     public void testIncPending() throws KubernetesAuthException, IOException {
-        ConfigMap cm = createTestConfigMap(false, 3000, 64);
+        ConfigMap cm = createTestConfigMap("", 3000, 64);
         DoneableConfigMap dcm = new DoneableConfigMap(cm);
         PodTemplate pt = createTestPodTemplate("1", "4.0", "8Gi", "4G");
 
@@ -238,7 +238,7 @@ public class KubernetesCloudLimiterTest {
 
     @Test
     public void testDecPending() throws KubernetesAuthException, IOException {
-        ConfigMap cm = createTestConfigMap(false, 10000, 128000);
+        ConfigMap cm = createTestConfigMap("", 10000, 128000);
         DoneableConfigMap dcm = new DoneableConfigMap(cm);
         PodTemplate pt = createTestPodTemplate(".9", "4000m", "2000Mi", "4000M");
 
@@ -268,8 +268,8 @@ public class KubernetesCloudLimiterTest {
     }
 
     @Test
-    public void testAcquireLockNonForced() throws KubernetesAuthException, IOException, InterruptedException {
-        ConfigMap cm = createTestConfigMap(false, 0, 64);
+    public void testAcquireLock() throws KubernetesAuthException, IOException, InterruptedException {
+        ConfigMap cm = createTestConfigMap("", 0, 64);
 
         DoneableConfigMap dcm = new DoneableConfigMap(cm);
 
@@ -290,16 +290,17 @@ public class KubernetesCloudLimiterTest {
                 return mockClient;
             }
         };
+        cloud.setNamespace("cloud");
 
         KubernetesCloudLimiter limiter = cloud.getLimiter();
         boolean result = limiter.acquireLock();
         assertEquals("Non-forced lock has not been acquired", true, result);
-        assertEquals("Non-forced lock acquirement has not been written to ConfigMap", "true", dcm.getData().get(KubernetesCloudLimiter.LOCKED));
+        assertEquals("Non-forced lock acquirement has not been written to ConfigMap", cloud.getNamespace(), dcm.getData().get(KubernetesCloudLimiter.LOCKED_BY));
     }
 
     @Test
-    public void testAcquireLockForced() throws KubernetesAuthException, IOException, InterruptedException {
-        ConfigMap cm = createTestConfigMap(true, 2, 64);
+    public void testAcquireLockFail() throws KubernetesAuthException, IOException, InterruptedException {
+        ConfigMap cm = createTestConfigMap("not-cloud", 2, 64);
 
         DoneableConfigMap dcm = new DoneableConfigMap(cm);
 
@@ -320,16 +321,16 @@ public class KubernetesCloudLimiterTest {
                 return mockClient;
             }
         };
+        cloud.setNamespace("cloud");
 
         KubernetesCloudLimiter limiter = cloud.getLimiter();
         boolean result = limiter.acquireLock();
-        assertEquals("Forced lock has not been acquired", true, result);
-        assertEquals("Force lock acquirement has not been written to ConfigMap", "true", dcm.getData().get(KubernetesCloudLimiter.LOCKED));
+        assertEquals("Lock has been acquired", false, result);
     }
 
     @Test
     public void testReleaseLock() throws KubernetesAuthException, IOException {
-        ConfigMap cm = createTestConfigMap(true, 0, 64);
+        ConfigMap cm = createTestConfigMap("cloud", 0, 64);
 
         DoneableConfigMap dcm = new DoneableConfigMap(cm);
 
@@ -350,10 +351,11 @@ public class KubernetesCloudLimiterTest {
                 return mockClient;
             }
         };
+        cloud.setNamespace("cloud");
 
         KubernetesCloudLimiter limiter = cloud.getLimiter();
         limiter.releaseLock();
-        assertEquals("Lock release has not been written to ConfigMap", "false", dcm.getData().get(KubernetesCloudLimiter.LOCKED));
+        assertEquals("Lock release has not been written to ConfigMap", "", dcm.getData().get(KubernetesCloudLimiter.LOCKED_BY));
     }
 
     @Test
@@ -466,7 +468,7 @@ public class KubernetesCloudLimiterTest {
 
     @Test
     public void testEstimateNumSchedulablePods() throws KubernetesAuthException, IOException {
-        ConfigMap cm = createTestConfigMap(true, 0, 64);
+        ConfigMap cm = createTestConfigMap("cloud", 0, 64);
 
         KubernetesCloud cloud = new KubernetesCloud("name") {
             @Override
@@ -504,6 +506,7 @@ public class KubernetesCloudLimiterTest {
             }
 
         };
+        cloud.setNamespace("cloud");
 
         PodTemplate smallTemplate = createTestPodTemplate("1000m", "1", "1Gi", "1Gi");
         PodTemplate largeTemplate = createTestPodTemplate("1000m", "500m", "32G", "64000000Ki");

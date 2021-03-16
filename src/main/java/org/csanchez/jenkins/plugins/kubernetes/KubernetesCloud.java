@@ -12,7 +12,6 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -27,7 +26,6 @@ import javax.servlet.ServletException;
 
 import hudson.model.ItemGroup;
 import hudson.util.XStream2;
-import io.fabric8.openshift.client.OpenShiftClient;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang.StringUtils;
 import org.csanchez.jenkins.plugins.kubernetes.pipeline.PodTemplateMap;
@@ -46,7 +44,6 @@ import com.cloudbees.plugins.credentials.CredentialsMatchers;
 import com.cloudbees.plugins.credentials.common.StandardCredentials;
 import com.cloudbees.plugins.credentials.common.StandardListBoxModel;
 import com.cloudbees.plugins.credentials.domains.URIRequirementBuilder;
-import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableMap;
 
 import edu.umd.cs.findbugs.annotations.NonNull;
@@ -513,7 +510,9 @@ public class KubernetesCloud extends Cloud {
                 return r;
             }
 
-            limiter.acquireLock();
+            if (!limiter.acquireLock()) {
+                throw new IOException("unable to acquire lock for limiter");
+            }
             int currentlySchedulablePods = limiter.estimateNumSchedulablePods(getUnwrappedTemplate(getTemplate(label)));
 
             int toBeProvisioned = Math.max(0, Math.min(currentlySchedulablePods, excessWorkload));

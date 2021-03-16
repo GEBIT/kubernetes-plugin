@@ -37,11 +37,10 @@ public class KubernetesCloudLimiter {
     static final String COMPUTE_LABEL_VALUE = "general";
     static final String COMPUTE_LABEL_NAME = "compute";
     static final String GLOBAL_CONFIG_MAP_NAME = "default";
-    static final String LOCKED = "locked";
     static final String GLOBAL_NAMESPACE = "jenkins-masters";
     static final String PENDING_CPU_MILLIS = "pendingCpuMillis";
     static final String PENDING_MEM_MI = "pendingMemMi";
-    static final long MAX_ĹOCK_TIME_MS = 60 * 1000;
+    static final String LOCKED_BY = "lockedBy";
     static final int MAX_TRIES = 5;
 
     private transient KubernetesCloud cloud;
@@ -75,7 +74,7 @@ public class KubernetesCloudLimiter {
             Map<String, String> data = new HashMap<>();
             data.put(PENDING_CPU_MILLIS, "0");
             data.put(PENDING_MEM_MI, "0");
-            data.put(LOCKED, "false");
+            data.put(LOCKED_BY, "");
 
             cloud.connect().configMaps().inNamespace(GLOBAL_NAMESPACE).createOrReplaceWithNew().
                 withNewMetadata().
@@ -86,40 +85,45 @@ public class KubernetesCloudLimiter {
         }
     }
 
-    public boolean acquireLock() throws KubernetesAuthException, IOException, InterruptedException {
-        return acquireLock(false);
-    }
-
-    private boolean acquireLock(boolean force) throws KubernetesAuthException, IOException, InterruptedException {
+    public synchronized boolean acquireLock() throws KubernetesAuthException, IOException, InterruptedException {
         checkGlobalConfigMap();
 
         int numTries = 0;
-        boolean locked = true;
+        String lockedBy = null;
         while (numTries < MAX_TRIES) {
             //get the global config map
             ConfigMap cm = getGlobalConfigMap();
-            if (cm == null) {
-                LOGGER.log(Level.SEVERE, "global config map does not exist");
-                return false;
-            }
-            locked = Boolean.parseBoolean(cm.getData().get(LOCKED));
-            if (locked && !force) {
-                //wait a second, then try again
-                Thread.sleep(1000);
-            } else {
+            lockedBy = cm.getData().get(LOCKED_BY);
+            if (isUnlocked(lockedBy)) {
                 //we lock for us now
-                findGlobalConfigMap().edit().addToData(LOCKED, "true").done();
+                findGlobalConfigMap().edit().addToData(LOCKED_BY, cloud.getNamespace()).done();
                 return true;
+            } else {
+                //wait a second, then try again
+                LOGGER.log(Level.FINE, "global config map is locked by {0}, waiting 1s to try again", lockedBy);
+                Thread.sleep(1000);
             }
             numTries++;
         }
-        if (locked) {
-            // if its still locked after MAX_RETRIES, force it
-            LOGGER.log(Level.SEVERE, "forcing lock for global config map");
-            return acquireLock(true);
-        }
         LOGGER.log(Level.SEVERE, "number of max tries reached to acquire lock for global config map");
         return false;
+    }
+
+    private boolean isUnlocked(String lockedBy) {
+        return lockedBy != null && lockedBy.equals("");
+    }
+
+    public synchronized void releaseLock() throws KubernetesAuthException, IOException {
+        checkGlobalConfigMap();
+
+        ConfigMap cm = getGlobalConfigMap();
+        String lockedBy = cm.getData().get(LOCKED_BY);
+        if (lockedBy != null && lockedBy.equals(cloud.getNamespace())) {
+            findGlobalConfigMap().edit().addToData(LOCKED_BY, "").done();
+            LOGGER.log(Level.FINER, "released lock for cloud {0}", cloud.getNamespace());
+        } else {
+            LOGGER.log(Level.SEVERE, "unable to release lock for cloud {0}, is locked by cloud {1}", new Object[] {cloud.getNamespace(), lockedBy});
+        }
     }
 
     int getPendingCpuMillis() throws KubernetesAuthException, IOException {
@@ -134,12 +138,6 @@ public class KubernetesCloudLimiter {
 
         ConfigMap cm = getGlobalConfigMap();
         return Integer.parseInt(cm.getData().get(PENDING_MEM_MI));
-    }
-
-    public void releaseLock() throws KubernetesAuthException, IOException {
-        checkGlobalConfigMap();
-
-        findGlobalConfigMap().edit().addToData(LOCKED, "false").done();
     }
 
     public void incPending(PodTemplate template) throws KubernetesAuthException, IOException {
