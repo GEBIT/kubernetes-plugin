@@ -407,6 +407,7 @@ public class PodTemplateUtils {
         combinedVolumes.putAll(template.getVolumes().stream().collect(toMap(v -> v.getMountPath(), v -> v)));
 
         WorkspaceVolume workspaceVolume = WorkspaceVolume.merge(parent.getWorkspaceVolume(), template.getWorkspaceVolume());
+        boolean mountWorkspace = template.getMountWorkspace();
 
         //Tool location node properties
         List<NodeProperty<?>> nodeProperties = new ArrayList<>(parent.getNodeProperties());
@@ -423,6 +424,7 @@ public class PodTemplateUtils {
         podTemplate.setContainers(new ArrayList<>(combinedContainers.values()));
         podTemplate.setWorkspaceVolume(workspaceVolume);
         podTemplate.setVolumes(new ArrayList<>(combinedVolumes.values()));
+        podTemplate.setMountWorkspace(mountWorkspace);
         podTemplate.setImagePullSecrets(new ArrayList<>(imagePullSecrets));
         podTemplate.setAnnotations(new ArrayList<>(podAnnotations));
         podTemplate.setNodeProperties(nodeProperties);

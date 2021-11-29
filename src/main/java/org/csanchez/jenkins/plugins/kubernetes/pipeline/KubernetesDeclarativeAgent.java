@@ -76,6 +76,8 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
     @CheckForNull
     private WorkspaceVolume workspaceVolume;
     @CheckForNull
+    private Boolean mountWorkspace;
+    @CheckForNull
     private String supplementalGroups;
 
     @DataBoundConstructor
@@ -302,6 +304,15 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
         this.workspaceVolume = (workspaceVolume == null || workspaceVolume.equals(PodTemplateStep.DescriptorImpl.defaultWorkspaceVolume)) ? null : workspaceVolume;
     }
 
+    public boolean getMountWorkspace() {
+        return mountWorkspace;
+    }
+
+    @DataBoundSetter
+    public void setMountWorkspace(Boolean mountWorkspace) {
+        this.mountWorkspace = mountWorkspace;
+    }
+
     @DataBoundSetter
     public void setSupplementalGroups(String supplementalGroups) {
         this.supplementalGroups = Util.fixEmpty(supplementalGroups);
@@ -343,6 +354,9 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
         }
         if (workspaceVolume != null) {
             argMap.put("workspaceVolume", workspaceVolume);
+        }
+        if (mountWorkspace != null) {
+            argMap.put("mountWorkspace", mountWorkspace);
         }
         if (!StringUtils.isEmpty(cloud)) {
             argMap.put("cloud", cloud);

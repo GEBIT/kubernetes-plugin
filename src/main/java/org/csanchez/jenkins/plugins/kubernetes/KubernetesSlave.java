@@ -24,6 +24,8 @@ import org.apache.commons.lang.RandomStringUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.Validate;
 import org.csanchez.jenkins.plugins.kubernetes.pod.retention.PodRetention;
+import org.jenkinsci.plugins.cloudstats.ProvisioningActivity.Id;
+import org.jenkinsci.plugins.cloudstats.TrackedItem;
 import org.jenkinsci.plugins.durabletask.executors.OnceRetentionStrategy;
 import org.jenkinsci.plugins.kubernetes.auth.KubernetesAuthException;
 import org.jvnet.localizer.ResourceBundleHolder;
@@ -57,7 +59,7 @@ import static org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud.JNLP_NAME;
 /**
  * @author Carlos Sanchez carlos@apache.org
  */
-public class KubernetesSlave extends AbstractCloudSlave {
+public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
 
     private static final Logger LOGGER = Logger.getLogger(KubernetesSlave.class.getName());
 
@@ -81,6 +83,9 @@ public class KubernetesSlave extends AbstractCloudSlave {
 
     @CheckForNull
     private transient Pod pod;
+
+    // id for cloud-stats plugin
+    private transient Id id;
 
     @NonNull
     public PodTemplate getTemplate() {
@@ -443,6 +448,14 @@ public class KubernetesSlave extends AbstractCloudSlave {
         } catch (IOException|InterruptedException e) {
             e.printStackTrace(listener.error("[WARNING] Unable to retrieve HOME environment variable"));
         }
+    }
+
+    public Id getId() {
+        return id;
+    }
+
+    public void setId(Id id) {
+        this.id = id;
     }
 
     protected Object readResolve() {

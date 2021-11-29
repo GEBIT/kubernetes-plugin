@@ -95,7 +95,7 @@ public class PodTemplateBuilder {
 
     private static final Pattern SPLIT_IN_SPACES = Pattern.compile("([^\"]\\S*|\".+?\")\\s*");
 
-    private static final String WORKSPACE_VOLUME_NAME = "workspace-volume";
+    public static final String WORKSPACE_VOLUME_NAME = "workspace-volume";
 
     @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "tests")
     @Restricted(NoExternalUse.class)
@@ -188,13 +188,15 @@ public class PodTemplateBuilder {
             }
         }
 
-        volumes.put(WORKSPACE_VOLUME_NAME, template.getWorkspaceVolume().buildVolume(WORKSPACE_VOLUME_NAME, agent != null ? agent.getPodName() : null));
+        if (template.getMountWorkspace()) {
+            volumes.put(WORKSPACE_VOLUME_NAME, template.getWorkspaceVolume().buildVolume(WORKSPACE_VOLUME_NAME, agent != null ? agent.getPodName() : null));
+        }
 
         Map<String, Container> containers = new HashMap<>();
         // containers from pod template
         for (ContainerTemplate containerTemplate : template.getContainers()) {
             containers.put(containerTemplate.getName(),
-                    createContainer(containerTemplate, template.getEnvVars(), volumeMounts.values()));
+                    createContainer(containerTemplate, template.getEnvVars(), volumeMounts.values(), template.getMountWorkspace()));
         }
 
         MetadataNested<PodBuilder> metadataBuilder = new PodBuilder().withNewMetadata();
@@ -417,7 +419,7 @@ public class PodTemplateBuilder {
     }
 
     private Container createContainer(ContainerTemplate containerTemplate, Collection<TemplateEnvVar> globalEnvVars,
-            Collection<VolumeMount> volumeMounts) {
+            Collection<VolumeMount> volumeMounts, boolean mountWorkspace) {
         Map<String, EnvVar> envVarsMap = new HashMap<>();
         String workingDir = substituteEnv(containerTemplate.getWorkingDir());
         if (JNLP_NAME.equals(containerTemplate.getName())) {
@@ -447,7 +449,7 @@ public class PodTemplateBuilder {
         ContainerPort[] ports = containerTemplate.getPorts().stream().map(entry -> entry.toPort()).toArray(size -> new ContainerPort[size]);
 
 
-        List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, workingDir);
+        List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, workingDir, mountWorkspace);
 
         ContainerLivenessProbe clp = containerTemplate.getLivenessProbe();
         Probe livenessProbe = null;
@@ -495,12 +497,13 @@ public class PodTemplateBuilder {
             wd = ContainerTemplate.DEFAULT_WORKING_DIR;
             LOGGER.log(Level.FINE, "Container workingDir is null, defaulting to {0}", wd);
         }
-        return new VolumeMountBuilder().withMountPath(wd).withName(WORKSPACE_VOLUME_NAME).withReadOnly(false).build();
+        return new VolumeMountBuilder().withMountPath(
+                wd + "/" + ContainerTemplate.WORKSPACE_DIR_NAME).withName(WORKSPACE_VOLUME_NAME).withReadOnly(false).build();
     }
 
-    private List<VolumeMount> getContainerVolumeMounts(Collection<VolumeMount> volumeMounts, String workingDir) {
+    private List<VolumeMount> getContainerVolumeMounts(Collection<VolumeMount> volumeMounts, String workingDir, boolean mountWorkspace) {
         List<VolumeMount> containerMounts = new ArrayList<>(volumeMounts);
-        if (!isNullOrEmpty(workingDir) && !PodVolume.volumeMountExists(workingDir, volumeMounts)) {
+        if (!isNullOrEmpty(workingDir) && !PodVolume.volumeMountExists(workingDir, volumeMounts) && mountWorkspace) {
             containerMounts.add(getDefaultVolumeMount(workingDir));
         }
         return containerMounts;
