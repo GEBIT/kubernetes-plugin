@@ -3,10 +3,9 @@ package org.csanchez.jenkins.plugins.kubernetes;
 import hudson.Extension;
 import hudson.model.AbstractDescribableImpl;
 import hudson.model.Descriptor;
-import hudson.util.FormValidation;
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.QueryParameter;
+
 import java.io.Serializable;
 
 /**
@@ -76,6 +75,18 @@ public class ContainerLivenessProbe extends AbstractDescribableImpl<ContainerLiv
 
     public void setSuccessThreshold(int successThreshold) {
         this.successThreshold = successThreshold;
+    }
+
+    @Override
+    public String toString() {
+        return "ContainerLivenessProbe{" +
+                "execArgs='" + execArgs + '\'' +
+                ", timeoutSeconds=" + timeoutSeconds +
+                ", initialDelaySeconds=" + initialDelaySeconds +
+                ", failureThreshold=" + failureThreshold +
+                ", periodSeconds=" + periodSeconds +
+                ", successThreshold=" + successThreshold +
+                '}';
     }
 
     @Extension

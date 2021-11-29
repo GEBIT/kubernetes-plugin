@@ -7,19 +7,17 @@
  * two concurrent jobs with this pipeline. Or change readOnly: true after the first run
  */
 
-def label = "maven-${UUID.randomUUID().toString()}"
-
-podTemplate(label: label, containers: [
-  containerTemplate(name: 'maven', image: 'maven:3.6.0-jdk-8-alpine', ttyEnabled: true, command: 'cat')
+podTemplate(containers: [
+  containerTemplate(name: 'maven', image: 'maven:3.8.1-jdk-8', command: 'sleep', args: '99d')
   ], volumes: [
   persistentVolumeClaim(mountPath: '/root/.m2/repository', claimName: 'maven-repo', readOnly: false)
   ]) {
 
-  node(label) {
+  node(POD_LABEL) {
     stage('Build a Maven project') {
       git 'https://github.com/jenkinsci/kubernetes-plugin.git'
       container('maven') {
-          sh 'mvn -B clean package'
+        sh 'mvn -B -ntp clean package -DskipTests'
       }
     }
   }

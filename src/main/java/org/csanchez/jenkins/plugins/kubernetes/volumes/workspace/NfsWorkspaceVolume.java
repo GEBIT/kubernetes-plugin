@@ -24,9 +24,8 @@
 
 package org.csanchez.jenkins.plugins.kubernetes.volumes.workspace;
 
-import javax.annotation.CheckForNull;
-import javax.annotation.Nonnull;
-
+import edu.umd.cs.findbugs.annotations.CheckForNull;
+import edu.umd.cs.findbugs.annotations.NonNull;
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
 
@@ -34,6 +33,8 @@ import hudson.Extension;
 import hudson.model.Descriptor;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
+
+import java.util.Objects;
 
 public class NfsWorkspaceVolume extends WorkspaceVolume {
     private String serverAddress;
@@ -48,7 +49,7 @@ public class NfsWorkspaceVolume extends WorkspaceVolume {
         this.readOnly = readOnly;
     }
 
-    public Volume buildVolume(String volumeName) {
+    public Volume buildVolume(String volumeName, String podName) {
         return new VolumeBuilder()
                 .withName(volumeName)
                 .withNewNfs(getServerPath(), getReadOnly(), getServerAddress())
@@ -63,15 +64,31 @@ public class NfsWorkspaceVolume extends WorkspaceVolume {
         return serverPath;
     }
 
-    @Nonnull
+    @NonNull
     public Boolean getReadOnly() {
         return readOnly != null && readOnly;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        NfsWorkspaceVolume that = (NfsWorkspaceVolume) o;
+        return Objects.equals(serverAddress, that.serverAddress) &&
+                Objects.equals(serverPath, that.serverPath) &&
+                Objects.equals(readOnly, that.readOnly);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(serverAddress, serverPath, readOnly);
     }
 
     @Extension
     @Symbol("nfsWorkspaceVolume")
     public static class DescriptorImpl extends Descriptor<WorkspaceVolume> {
         @Override
+        @NonNull
         public String getDisplayName() {
             return "NFS Workspace Volume";
         }

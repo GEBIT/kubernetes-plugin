@@ -19,22 +19,22 @@
   </f:entry>
 
   <f:entry field="workingDir" title="${%Working directory}">
-    <f:textbox default="/home/jenkins"/>
+    <f:textbox default="${descriptor.workingDir}"/>
   </f:entry>
 
   <f:entry field="command" title="${%Command to run}">
-    <f:textbox default="/bin/sh -c"/>
+    <f:textbox default="sleep"/>
   </f:entry>
 
   <f:entry field="args" title="${%Arguments to pass to the command}">
-    <f:textbox default="cat"/>
+    <f:textbox default="9999999"/>
   </f:entry>
 
   <f:entry field="ttyEnabled" title="${%Allocate pseudo-TTY}">
-    <f:checkbox default="true"/>
+    <f:checkbox default="false"/>
   </f:entry>
 
-    <f:entry title="${%EnvVars}" description="${%List of environment variables to set in agent pod}">
+    <f:entry title="${%Environment Variables}" field="envVars" description="${%List of environment variables to set in agent pod}">
       <f:repeatableHeteroProperty field="envVars" hasHeader="true" addCaption="${%Add Environment Variable}"
                                   deleteCaption="${%Delete Environment Variable}" />
     </f:entry>
@@ -44,11 +44,23 @@
       <f:checkbox/>
     </f:entry>
 
+    <f:entry field="runAsUser" title="${%Run As User ID}">
+      <f:textbox/>
+    </f:entry>
+
+    <f:entry field="runAsGroup" title="${%Run As Group ID}">
+      <f:textbox/>
+    </f:entry>
+
     <f:entry field="resourceRequestCpu" title="${%Request CPU}">
       <f:textbox/>
     </f:entry>
 
     <f:entry field="resourceRequestMemory" title="${%Request Memory}">
+      <f:textbox/>
+    </f:entry>
+
+    <f:entry field="resourceRequestEphemeralStorage" title="${%Request Ephemeral Storage}">
       <f:textbox/>
     </f:entry>
 
@@ -60,6 +72,10 @@
       <f:textbox/>
     </f:entry>
 
+    <f:entry field="resourceLimitEphemeralStorage" title="${%Limit Ephemeral Storage}">
+      <f:textbox/>
+    </f:entry>
+
     <f:entry field="livenessProbe" title="${%Liveness Probe}">
       <f:rowSet name="${field}">
         <j:set var="descriptor" value="${attrs.propertyDescriptor ?: app.getDescriptorOrDie(descriptor.getPropertyTypeOrDie(instance,field).clazz)}" />
@@ -67,7 +83,7 @@
         <st:include from="${descriptor}" page="${descriptor.configPage}" />
       </f:rowSet>
     </f:entry>
-    <f:entry title="${%PortMappings}" description="${%List of exposed ports}">
+    <f:entry title="${%Port Mappings}" description="${%List of exposed ports}">
       <f:repeatableHeteroProperty field="ports" hasHeader="true" addCaption="${%Add Port Mapping}"
                                     deleteCaption="${%Delete Port Mapping}" />
     </f:entry>

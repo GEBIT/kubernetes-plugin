@@ -27,21 +27,24 @@ package org.csanchez.jenkins.plugins.kubernetes;
 import static java.util.Arrays.*;
 import static java.util.Collections.*;
 import static org.csanchez.jenkins.plugins.kubernetes.PodTemplateUtils.*;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.junit.Assert.*;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.csanchez.jenkins.plugins.kubernetes.model.KeyValueEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.model.SecretEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.HostPathVolume;
+import org.junit.Rule;
 import org.junit.Test;
-
-import com.google.common.collect.ImmutableMap;
+import org.jvnet.hudson.test.Issue;
 
 import hudson.model.Node;
 import hudson.tools.ToolLocationNodeProperty;
@@ -60,8 +63,12 @@ import io.fabric8.kubernetes.api.model.SecretEnvSource;
 import io.fabric8.kubernetes.api.model.Toleration;
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import io.fabric8.kubernetes.api.model.VolumeMountBuilder;
+import org.jvnet.hudson.test.JenkinsRule;
 
 public class PodTemplateUtilsTest {
+
+    @Rule
+    public JenkinsRule j = new JenkinsRule();
 
     private static final PodImagePullSecret SECRET_1 = new PodImagePullSecret("secret1");
     private static final PodImagePullSecret SECRET_2 = new PodImagePullSecret("secret2");
@@ -185,11 +192,18 @@ public class PodTemplateUtilsTest {
 
     @Test
     public void shouldCombineAllLabels() {
+        Map<String, String> labelsMap1 = new HashMap<>();
+        labelsMap1.put("label1", "pod1");
+        labelsMap1.put("label2", "pod1");
         Pod pod1 = new PodBuilder().withNewMetadata().withLabels( //
-                ImmutableMap.of("label1", "pod1", "label2", "pod1") //
+                Collections.unmodifiableMap(labelsMap1) //
         ).endMetadata().withNewSpec().endSpec().build();
+
+        Map<String, String> labelsMap2 = new HashMap<>();
+        labelsMap2.put("label1", "pod2");
+        labelsMap2.put("label3", "pod2");
         Pod pod2 = new PodBuilder().withNewMetadata().withLabels( //
-                ImmutableMap.of("label1", "pod2", "label3", "pod2") //
+                Collections.unmodifiableMap(labelsMap2) //
         ).endMetadata().withNewSpec().endSpec().build();
 
         Map<String, String> labels = combine(pod1, pod2).getMetadata().getLabels();
@@ -239,7 +253,6 @@ public class PodTemplateUtilsTest {
         podTemplate.setIdleMinutes(99);
         podTemplate.setActiveDeadlineSeconds(99);
         podTemplate.setServiceAccount("ServiceAccount");
-        podTemplate.setCustomWorkspaceVolumeEnabled(true);
         podTemplate.setYaml("Yaml");
 
         PodTemplate selfCombined = combine(podTemplate, podTemplate);
@@ -257,7 +270,6 @@ public class PodTemplateUtilsTest {
         assertEquals(99, selfCombined.getIdleMinutes());
         assertEquals(99, selfCombined.getActiveDeadlineSeconds());
         assertEquals("ServiceAccount", selfCombined.getServiceAccount());
-        assertEquals(true, selfCombined.isCustomWorkspaceVolumeEnabled());
         assertThat(selfCombined.getYamls(), hasItems("Yaml", "Yaml"));
     }
 
@@ -302,6 +314,50 @@ public class PodTemplateUtilsTest {
     }
 
     @Test
+    public void shouldCombineInitContainers() {
+        Pod parentPod = new PodBuilder()
+                .withNewMetadata().endMetadata()
+                .withNewSpec()
+                    .withInitContainers(new ContainerBuilder().withName("init-parent").build())
+                .endSpec()
+                .build();
+        Pod childPod = new PodBuilder()
+                .withNewMetadata().endMetadata()
+                .withNewSpec()
+                .withInitContainers(new ContainerBuilder().withName("init-child").build())
+                .endSpec()
+                .build();
+
+        Pod combinedPod = combine(parentPod, childPod);
+        List<Container> initContainers = combinedPod.getSpec().getInitContainers();
+        assertThat(initContainers, hasSize(2));
+        assertThat(initContainers.get(0).getName(), equalTo("init-parent"));
+        assertThat(initContainers.get(1).getName(), equalTo("init-child"));
+    }
+
+    @Test
+    public void childShouldOverrideParentInitContainer() {
+        Pod parentPod = new PodBuilder()
+                .withNewMetadata().endMetadata()
+                .withNewSpec()
+                .withInitContainers(new ContainerBuilder().withName("init").withNewImage("image-parent").build())
+                .endSpec()
+                .build();
+        Pod childPod = new PodBuilder()
+                .withNewMetadata().endMetadata()
+                .withNewSpec()
+                .withInitContainers(new ContainerBuilder().withName("init").withNewImage("image-child").build())
+                .endSpec()
+                .build();
+
+        Pod combinedPod = combine(parentPod, childPod);
+        List<Container> initContainers = combinedPod.getSpec().getInitContainers();
+        assertThat(initContainers, hasSize(1));
+        assertThat(initContainers.get(0).getName(), equalTo("init"));
+        assertThat(initContainers.get(0).getImage(), equalTo("image-child"));
+    }
+
+    @Test
     public void shouldCombineAllPodKeyValueEnvVars() {
         PodTemplate template1 = new PodTemplate();
         KeyValueEnvVar podEnvVar1 = new KeyValueEnvVar("key-1", "value-1");
@@ -335,12 +391,12 @@ public class PodTemplateUtilsTest {
     @Test
     public void shouldCombineAllPodSecretEnvVars() {
         PodTemplate template1 = new PodTemplate();
-        SecretEnvVar podSecretEnvVar1 = new SecretEnvVar("key-1", "secret-1", "secret-key-1");
+        SecretEnvVar podSecretEnvVar1 = new SecretEnvVar("key-1", "secret-1", "secret-key-1", false);
         template1.setEnvVars(singletonList(podSecretEnvVar1));
 
         PodTemplate template2 = new PodTemplate();
-        SecretEnvVar podSecretEnvVar2 = new SecretEnvVar("key-2", "secret-2", "secret-key-2");
-        SecretEnvVar podSecretEnvVar3 = new SecretEnvVar("key-3", "secret-3", "secret-key-3");
+        SecretEnvVar podSecretEnvVar2 = new SecretEnvVar("key-2", "secret-2", "secret-key-2", false);
+        SecretEnvVar podSecretEnvVar3 = new SecretEnvVar("key-3", "secret-3", "secret-key-3", false);
         template2.setEnvVars(asList(podSecretEnvVar2, podSecretEnvVar3));
 
         PodTemplate result = combine(template1, template2);
@@ -351,11 +407,11 @@ public class PodTemplateUtilsTest {
     @Test
     public void shouldFilterOutNullOrEmptyPodSecretEnvVars() {
         PodTemplate template1 = new PodTemplate();
-        SecretEnvVar podSecretEnvVar1 = new SecretEnvVar("", "secret-1", "secret-key-1");
+        SecretEnvVar podSecretEnvVar1 = new SecretEnvVar("", "secret-1", "secret-key-1", false);
         template1.setEnvVars(singletonList(podSecretEnvVar1));
 
         PodTemplate template2 = new PodTemplate();
-        SecretEnvVar podSecretEnvVar2 = new SecretEnvVar(null, "secret-2", "secret-key-2");
+        SecretEnvVar podSecretEnvVar2 = new SecretEnvVar(null, "secret-2", "secret-key-2", false);
         template2.setEnvVars(singletonList(podSecretEnvVar2));
 
         PodTemplate result = combine(template1, template2);
@@ -397,12 +453,12 @@ public class PodTemplateUtilsTest {
     @Test
     public void shouldCombineAllSecretEnvVars() {
         ContainerTemplate template1 = new ContainerTemplate("name-1", "image-1");
-        SecretEnvVar containerSecretEnvVar1 = new SecretEnvVar("key-1", "secret-1", "secret-key-1");
+        SecretEnvVar containerSecretEnvVar1 = new SecretEnvVar("key-1", "secret-1", "secret-key-1", false);
         template1.setEnvVars(singletonList(containerSecretEnvVar1));
 
         ContainerTemplate template2 = new ContainerTemplate("name-2", "image-2");
-        SecretEnvVar containerSecretEnvVar2 = new SecretEnvVar("key-2", "secret-2", "secret-key-2");
-        SecretEnvVar containerSecretEnvVar3 = new SecretEnvVar("key-3", "secret-3", "secret-key-3");
+        SecretEnvVar containerSecretEnvVar2 = new SecretEnvVar("key-2", "secret-2", "secret-key-2", false);
+        SecretEnvVar containerSecretEnvVar3 = new SecretEnvVar("key-3", "secret-3", "secret-key-3", false);
         template2.setEnvVars(asList(containerSecretEnvVar2, containerSecretEnvVar3));
 
         ContainerTemplate result = combine(template1, template2);
@@ -428,6 +484,7 @@ public class PodTemplateUtilsTest {
 
         // Config maps and secrets could potentially overwrite each other's variables. We should preserve their order.
         assertThat(result.getEnvFrom(), contains(configMap1, secret1, configMap2, secret2));
+        assertNull(result.getSecurityContext());
     }
 
     @Test
@@ -467,9 +524,15 @@ public class PodTemplateUtilsTest {
     }
 
     private ContainerBuilder containerBuilder() {
+        Map<String, Quantity> limitMap = new HashMap<>();
+        limitMap.put("cpu", new Quantity());
+        limitMap.put("memory", new Quantity());
+        Map<String, Quantity> requestMap = new HashMap<>();
+        limitMap.put("cpu", new Quantity());
+        limitMap.put("memory", new Quantity());
         return new ContainerBuilder().withNewSecurityContext().endSecurityContext().withNewResources()
-                .withLimits(ImmutableMap.of("cpu", new Quantity(), "memory", new Quantity()))
-                .withRequests(ImmutableMap.of("cpu", new Quantity(), "memory", new Quantity())).endResources();
+                .withLimits(Collections.unmodifiableMap(limitMap))
+                .withRequests(Collections.unmodifiableMap(requestMap)).endResources();
     }
 
     @Test
@@ -534,6 +597,7 @@ public class PodTemplateUtilsTest {
         assertThat(combine(template1, template2).getPorts(), contains(port2));
     }
 
+    @Test
     public void shouldCombineAllResources() {
         Container container1 = new Container();
         container1.setResources(new ResourceRequirementsBuilder() //
@@ -553,20 +617,45 @@ public class PodTemplateUtilsTest {
 
         Container result = combine(container1, container2);
 
-        assertEquals(new Quantity("2"), result.getResources().getLimits().get("cpu"));
-        assertEquals(new Quantity("2Gi"), result.getResources().getLimits().get("memory"));
-        assertEquals(new Quantity("200m"), result.getResources().getRequests().get("cpu"));
-        assertEquals(new Quantity("256Mi"), result.getResources().getRequests().get("memory"));
+        assertQuantity("2", result.getResources().getLimits().get("cpu"));
+        assertQuantity("2Gi", result.getResources().getLimits().get("memory"));
+        assertQuantity("200m", result.getResources().getRequests().get("cpu"));
+        assertQuantity("256Mi", result.getResources().getRequests().get("memory"));
+    }
+
+    @Test
+    public void shouldCombineContainersInOrder() {
+        Container container1 = containerBuilder().withName("mysql").build();
+        Container container2 = containerBuilder().withName("jnlp").build();
+        Pod pod1 = podBuilder().withContainers(container1, container2).endSpec().build();
+        
+        Container container3 = containerBuilder().withName("alpine").build();
+        Container container4 = containerBuilder().withName("node").build();
+        Container container5 = containerBuilder().withName("mvn").build();
+        Pod pod2 = podBuilder().withContainers(container3, container4, container5).endSpec().build();
+        
+        Pod result = combine(pod1, pod2);
+        assertEquals(Arrays.asList("mysql", "jnlp", "alpine", "node", "mvn"), result.getSpec().getContainers().stream().map(Container::getName).collect(Collectors.toList()));
+    }
+
+    /**
+     * Use instead of {@link org.junit.Assert#assertEquals(Object, Object)} on {@link Quantity}.
+     * @see <a href="https://github.com/fabric8io/kubernetes-client/issues/2034">kubernetes-client #2034</a>
+     */
+    public static void assertQuantity(String expected, Quantity actual) {
+        if (Quantity.getAmountInBytes(new Quantity(expected)).compareTo(Quantity.getAmountInBytes(actual)) != 0) {
+            fail("expected: " + expected + " but was: " + actual.getAmount() + actual.getFormat());
+        }
     }
 
     @Test
     public void shouldFilterOutNullOrEmptySecretEnvVars() {
         ContainerTemplate template1 = new ContainerTemplate("name-1", "image-1");
-        SecretEnvVar containerSecretEnvVar1 = new SecretEnvVar("", "secret-1", "secret-key-1");
+        SecretEnvVar containerSecretEnvVar1 = new SecretEnvVar("", "secret-1", "secret-key-1", false);
         template1.setEnvVars(singletonList(containerSecretEnvVar1));
 
         ContainerTemplate template2 = new ContainerTemplate("name-2", "image-2");
-        SecretEnvVar containerSecretEnvVar2 = new SecretEnvVar(null, "secret-2", "secret-key-2");
+        SecretEnvVar containerSecretEnvVar2 = new SecretEnvVar(null, "secret-2", "secret-key-2", false);
         template2.setEnvVars(singletonList(containerSecretEnvVar2));
 
         ContainerTemplate result = combine(template1, template2);
@@ -652,6 +741,7 @@ public class PodTemplateUtilsTest {
     @Test
     public void testValidateLabelSpecialChars() {
         assertTrue(validateLabel("x-_.z"));
+        assertFalse(validateLabel("one two"));
     }
 
     @Test
@@ -676,17 +766,29 @@ public class PodTemplateUtilsTest {
 
         PodTemplate podTemplate1 = new PodTemplate();
         List<ToolLocationNodeProperty> nodeProperties1 = new ArrayList<>();
-        nodeProperties1.add(new ToolLocationNodeProperty(new ToolLocationNodeProperty.ToolLocation("toolKey1@Test","toolHome1")));
+        ToolLocationNodeProperty toolHome1 = new ToolLocationNodeProperty(new ToolLocationNodeProperty.ToolLocation("toolKey1@Test", "toolHome1"));
+        nodeProperties1.add(toolHome1);
         podTemplate1.setNodeProperties(nodeProperties1);
 
         PodTemplate podTemplate2 = new PodTemplate();
         List<ToolLocationNodeProperty> nodeProperties2 = new ArrayList<>();
-        nodeProperties2.add(new ToolLocationNodeProperty(new ToolLocationNodeProperty.ToolLocation("toolKey2@Test","toolHome2")));
+        ToolLocationNodeProperty toolHome2 = new ToolLocationNodeProperty(new ToolLocationNodeProperty.ToolLocation("toolKey2@Test", "toolHome2"));
+        nodeProperties2.add(toolHome2);
         podTemplate2.setNodeProperties(nodeProperties2);
 
         PodTemplate result = combine(podTemplate1,podTemplate2);
 
-        assertThat(result.getNodeProperties(), hasItems(nodeProperties1.get(0),nodeProperties2.get(0)));
+        assertThat(podTemplate1.getNodeProperties(), contains(toolHome1));
+        assertThat(podTemplate2.getNodeProperties(), contains(toolHome2));
+        assertThat(result.getNodeProperties(), contains(toolHome1, toolHome2));
 
+    }
+
+    @Test
+    @Issue("JENKINS-57116")
+    public void testParseYaml() {
+        PodTemplateUtils.parseFromYaml("{}");
+        PodTemplateUtils.parseFromYaml(null);
+        PodTemplateUtils.parseFromYaml("");
     }
 }

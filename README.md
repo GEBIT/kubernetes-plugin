@@ -1,35 +1,75 @@
-jenkins-kubernetes-plugin
+Kubernetes plugin for Jenkins
 =========================
+
+[![Jenkins Plugin](https://img.shields.io/jenkins/plugin/v/kubernetes.svg)](https://plugins.jenkins.io/kubernetes)
+[![GitHub release](https://img.shields.io/github/release/jenkinsci/kubernetes-plugin.svg?label=release)](https://github.com/jenkinsci/kubernetes-plugin/releases/latest)
+[![Jenkins Plugin Installs](https://img.shields.io/jenkins/plugin/i/kubernetes.svg?color=blue)](https://plugins.jenkins.io/kubernetes)
 
 Jenkins plugin to run dynamic agents in a Kubernetes cluster.
 
 Based on the [Scaling Docker with Kubernetes](http://www.infoq.com/articles/scaling-docker-with-kubernetes) article,
 automates the scaling of Jenkins agents running in Kubernetes.
 
-The plugin creates a Kubernetes Pod for each agent started,
-defined by the Docker image to run, and stops it after each build.
+The plugin creates a Kubernetes Pod for each agent started, and stops it after each build.
 
-Agents are launched using JNLP, so it is expected that the image connects automatically to the Jenkins master.
+Agents are launched as inbound agents, so it is expected that the container connects automatically to the Jenkins controller.
 For that some environment variables are automatically injected:
 
-* `JENKINS_URL`: Jenkins web interface url
-* `JENKINS_SECRET`: the secret key for authentication
-* `JENKINS_AGENT_NAME`: the name of the Jenkins agent
-* `JENKINS_NAME`: the name of the Jenkins agent (Deprecated. Only here for backwards compatibility)
+* `JENKINS_URL` : Jenkins web interface url
+* `JENKINS_SECRET` : the secret key for authentication
+* `JENKINS_AGENT_NAME` : the name of the Jenkins agent
+* `JENKINS_NAME` : the name of the Jenkins agent (Deprecated. Only here for backwards compatibility)
 
-Tested with [`jenkins/jnlp-slave`](https://hub.docker.com/r/jenkins/jnlp-slave),
-see the [Docker image source code](https://github.com/jenkinsci/docker-jnlp-slave).
+Tested with [`jenkins/inbound-agent`](https://hub.docker.com/r/jenkins/inbound-agent),
+see the [Docker image source code](https://github.com/jenkinsci/docker-inbound-agent).
 
-It is not required to run the Jenkins master inside Kubernetes. 
+It is not required to run the Jenkins controller inside Kubernetes.
 
-# Kubernetes Cloud Configuration
+# Generic Setup
+## Prerequisites
+* A running Kubernetes cluster 1.14 or later. For OpenShift users, this means OpenShift Container Platform 4.x.
+* A Jenkins instance installed
+* The Jenkins Kubernetes plugin installed
 
-In Jenkins settings click on add cloud, select `Kubernetes` and fill the information, like
-_Name_, _Kubernetes URL_, _Kubernetes server certificate key_, ...
+## Configuration
 
-If _Kubernetes URL_ is not set, the connection options will be autoconfigured from service account or kube config file.
+Fill in the Kubernetes plugin configuration.
+In order to do that, you will open the Jenkins UI and navigate to **Manage Jenkins -> Manage Nodes and Clouds -> Configure Clouds -> Add a new cloud -> Kubernetes** and enter the *Kubernetes URL* and *Jenkins URL* appropriately, unless Jenkins is running in Kubernetes in which case the defaults work.
 
-When running the Jenkins master outside of Kubernetes you will need to set the credential to secret text. The value of the credential will be the token of the service account you created for Jenkins in the cluster the agents will run on.
+Supported credentials include:
+
+* Username/password
+* Secret File (kubeconfig file)
+* Secret text (Token-based authentication) (OpenShift)
+* Google Service Account from private key (GKE authentication)
+* X.509 Client Certificate
+
+To test this connection is successful you can use the **Test Connection** button to ensure there is
+adequate communication from Jenkins to the Kubernetes cluster, as seen below
+
+![image](images/cloud-configuration.png)
+
+In addition to that, in the **Kubernetes Pod Template** section, we need to configure the image that will be used to 
+spin up the agent pod. We do not recommend overriding the `jnlp` container except under unusual circumstances. 
+For your agent, you can use the default Jenkins agent image available in [Docker Hub](https://hub.docker.com). In the
+‘Kubernetes Pod Template’ section you need to specify the following (the rest of the configuration is up to you):
+Kubernetes Pod Template Name - can be any and will be shown as a prefix for unique generated agent’ names, which will 
+be run automatically during builds
+Docker image - the docker image name that will be used as a reference to spin up a new Jenkins agent, as seen below
+
+![image](images/pod-template-configuration.png)
+
+If you check **WebSocket** then agents will connect over HTTP(S) rather than the Jenkins service TCP port.
+This is unnecessary when the Jenkins controller runs in the same Kubernetes cluster,
+but can greatly simplify setup when agents are in an external cluster
+and the Jenkins controller is not directly accessible (for example, it is behind a reverse proxy).
+See [JEP-222](https://jenkins.io/jep/222) for more.
+
+> **Notes:**
+> 
+> - If your Jenkins controller is outside the cluster and uses a self-signed HTTPS certificate,
+>   you will need some [additional configuration](#using-websockets-with-a-jenkins-master-with-self-signed-https-certificate).
+> - Be aware that there is a current bug in Jenkins which affects the resuming of builds during restarts of the controller when using WebSockets: [JENKINS-67062](https://issues.jenkins.io/browse/JENKINS-67062).
 
 ### Restricting what jobs can use your configured cloud
 
@@ -39,34 +79,51 @@ To enable this, in your cloud's advanced configuration check the
 `Restrict pipeline support to authorized folders` box. For a job to then
 use this cloud configuration you will need to add it in the jobs folder's configuration.
 
-# Pipeline support
+# Usage
+## Overview
 
-Nodes can be defined in a pipeline and then used, however, default execution always goes to the jnlp container.  You will need to specify the container you want to execute your task in.
+The Kubernetes plugin allocates Jenkins agents in Kubernetes pods. Within these pods, there is always one special
+container `jnlp` that is running the Jenkins agent. Other containers can run arbitrary processes of your choosing,
+and it is possible to run commands dynamically in any container in the agent pod. 
 
-This will run in jnlp container
+## Using a label
+
+Pod templates defined using the user interface declare a label. When a freestyle job or a pipeline job using
+`node('some-label')` uses a label declared by a pod template, the Kubernetes Cloud allocates a new pod to run the
+Jenkins agent.
+
+It should be noted that the main reason to use the global pod template definition is to migrate a huge corpus of
+existing projects (including freestyle) to run on Kubernetes without changing job definitions.
+New users setting up new Kubernetes builds should use the `podTemplate` step as shown in the example snippets
+[here](examples).
+
+## Using the pipeline step
+
+The `podTemplate` step defines an ephemeral pod template. It is created while the pipeline execution is within the
+`podTemplate` block. It is immediately deleted afterwards. Such pod templates are not intended to be shared with other
+builds or projects in the Jenkins instance.
+
+The following idiom creates a pod template with a generated unique label (available as `POD_LABEL`) and runs commands inside it.
+
 ```groovy
-// this guarantees the node will use this template
-def label = "mypod-${UUID.randomUUID().toString()}"
-podTemplate(label: label) {
-    node(label) {
-        stage('Run shell') {
-            sh 'echo hello world'
-        }
+podTemplate {
+    node(POD_LABEL) {
+        // pipeline steps...
     }
 }
 ```
 
-This will be container specific
+Commands will be executed by default in the `jnlp` container, where the Jenkins agent is running.
+(The `jnlp` name is historical and is retained for compatibility.)
+
+This will run in the `jnlp` container:
 ```groovy
-def label = "mypod-${UUID.randomUUID().toString()}"
-podTemplate(label: label) {
-  node(label) {
-    stage('Run shell') {
-      container('mycontainer') {
-        sh 'echo hello world'
-      }
+podTemplate {
+    node(POD_LABEL) {
+        stage('Run shell') {
+            sh 'echo hello world'
+        }
     }
-  }
 }
 ```
 
@@ -75,53 +132,59 @@ Find more examples in the [examples dir](examples).
 The default jnlp agent image used can be customized by adding it to the template
 
 ```groovy
-containerTemplate(name: 'jnlp', image: 'jenkins/jnlp-slave:3.27-1-alpine', args: '${computer.jnlpmac} ${computer.name}'),
+containerTemplate(name: 'jnlp', image: 'jenkins/inbound-agent:4.7-1', args: '${computer.jnlpmac} ${computer.name}'),
 ```
 
 or with the yaml syntax
 
-```
+```yaml
 apiVersion: v1
 kind: Pod
 spec:
   containers:
   - name: jnlp
-    image: 'jenkins/jnlp-slave:3.27-1-alpine'
+    image: 'jenkins/inbound-agent:4.7-1'
     args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
 ```
 
-### Container Group Support
+### Multiple containers support
 
-Multiple containers can be defined for the agent pod, with shared resources, like mounts. Ports in each container can be accessed as in any Kubernetes pod, by using `localhost`.
+Multiple containers can be defined for the agent pod, with shared resources, like mounts. Ports in each container can
+be accessed as in any Kubernetes pod, by using `localhost`.
 
-The `container` statement allows to execute commands directly into each container. This feature is considered **ALPHA** as there are still some problems with concurrent execution and pipeline resumption
+The `container` step allows executing commands into each container.
+
+---
+**Note**
+Due to implementation constraints, there can be issues when executing commands in different containers if they run using different uids.
+It is recommended to use the same uid across the different containers part of the same pod to avoid any issue.
+---
 
 ```groovy
-def label = "mypod-${UUID.randomUUID().toString()}"
-podTemplate(label: label, containers: [
-    containerTemplate(name: 'maven', image: 'maven:3.3.9-jdk-8-alpine', ttyEnabled: true, command: 'cat'),
-    containerTemplate(name: 'golang', image: 'golang:1.8.0', ttyEnabled: true, command: 'cat')
+podTemplate(containers: [
+    containerTemplate(name: 'maven', image: 'maven:3.8.1-jdk-8', command: 'sleep', args: '99d'),
+    containerTemplate(name: 'golang', image: 'golang:1.16.5', command: 'sleep', args: '99d')
   ]) {
 
-    node(label) {
+    node(POD_LABEL) {
         stage('Get a Maven project') {
             git 'https://github.com/jenkinsci/kubernetes-plugin.git'
             container('maven') {
                 stage('Build a Maven project') {
-                    sh 'mvn -B clean install'
+                    sh 'mvn -B -ntp clean install'
                 }
             }
         }
 
         stage('Get a Golang project') {
-            git url: 'https://github.com/hashicorp/terraform.git'
+            git url: 'https://github.com/hashicorp/terraform.git', branch: 'main'
             container('golang') {
                 stage('Build a Go project') {
-                    sh """
+                    sh '''
                     mkdir -p /go/src/github.com/hashicorp
                     ln -s `pwd` /go/src/github.com/hashicorp/terraform
-                    cd /go/src/github.com/hashicorp/terraform && make core-dev
-                    """
+                    cd /go/src/github.com/hashicorp/terraform && make
+                    '''
                 }
             }
         }
@@ -130,21 +193,88 @@ podTemplate(label: label, containers: [
 }
 ```
 
+or
 
-### Pod and container template configuration
+```groovy
+podTemplate(yaml: '''
+    apiVersion: v1
+    kind: Pod
+    spec:
+      containers:
+      - name: maven
+        image: maven:3.8.1-jdk-8
+        command:
+        - sleep
+        args:
+        - 99d
+      - name: golang
+        image: golang:1.16.5
+        command:
+        - sleep
+        args:
+        - 99d
+''') {
+  node(POD_LABEL) {
+    stage('Get a Maven project') {
+      git 'https://github.com/jenkinsci/kubernetes-plugin.git'
+      container('maven') {
+        stage('Build a Maven project') {
+          sh 'mvn -B -ntp clean install'
+        }
+      }
+    }
 
-The `podTemplate` is a template of a pod that will be used to create agents. It can be either configured via the user interface, or via pipeline.
+    stage('Get a Golang project') {
+      git url: 'https://github.com/hashicorp/terraform-provider-google.git', branch: 'main'
+      container('golang') {
+        stage('Build a Go project') {
+          sh '''
+            mkdir -p /go/src/github.com/hashicorp
+            ln -s `pwd` /go/src/github.com/hashicorp/terraform
+            cd /go/src/github.com/hashicorp/terraform && make
+          '''
+        }
+      }
+    }
+
+  }
+}
+```
+
+#### `POD_CONTAINER` variable
+
+The variable `POD_CONTAINER` contains the name of the container in the current context.
+It is defined only within a `container` block.
+
+```groovy
+podTemplate(containers: […]) {
+  node(POD_LABEL) {
+    stage('Run shell') {
+      container('mycontainer') {
+        sh "echo hello from $POD_CONTAINER" // displays 'hello from mycontainer'
+      }
+    }
+  }
+}
+```
+
+# Configuration reference
+## Pod template
+
+Pod templates are used to create agents. They can be either configured via the user interface, or in a pipeline, using
+the `podTemplate` step.
 Either way it provides access to the following fields:
 
 * **cloud** The name of the cloud as defined in Jenkins settings. Defaults to `kubernetes`
-* **name** The name of the pod.
+* **name** The name of the pod. This is only used for inheritance.
 * **namespace** The namespace of the pod.
-* **label** The label of the pod. Set a unique value to avoid conflicts across builds
-* **yaml** [yaml representation of the Pod](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.10/#pod-v1-core), to allow setting any values not supported as fields
-* **containers** The container templates that are use to create the containers of the pod *(see below)*.
+* **label** The node label. This is how the pod template can be referred to when asking for an agent through the `node` step. In a pipeline, it is recommended to omit this field and rely on the generated label that can be referred to using the `POD_LABEL` variable defined within the `podTemplate` block.
+* **yaml** [yaml representation of the Pod](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.20/#pod-v1-core), to allow setting any values not supported as fields
+* **yamlMergeStrategy** `merge()` or `override()`. Controls whether the yaml definition overrides or is merged with the yaml definition inherited from pod templates declared with `inheritFrom`. Defaults to `override()` (for backward compatibility reasons).
+* **containers** The container templates part of the pod *(see below for details)*.
 * **serviceAccount** The service account of the pod.
 * **nodeSelector** The node selector of the pod.
-* **nodeUsageMode** Either 'NORMAL' or 'EXCLUSIVE', this controls whether Jenkins only schedules jobs with label expressions matching or use the node as much as possible.
+* **nodeUsageMode** Either `NORMAL` or `EXCLUSIVE`, this controls whether Jenkins only schedules jobs with label expressions matching or use the node as much as possible.
 * **volumes** Volumes that are defined for the pod and are mounted by **ALL** containers.
 * **envVars** Environment variables that are applied to **ALL** containers.
     * **envVar** An environment variable whose value is defined inline.
@@ -153,233 +283,259 @@ Either way it provides access to the following fields:
 * **annotations** Annotations to apply to the pod.
 * **inheritFrom** List of one or more pod templates to inherit from *(more details below)*.
 * **slaveConnectTimeout** Timeout in seconds for an agent to be online *(more details below)*.
-* **podRetention** Controls the behavior of keeping slave pods. Can be 'never()', 'onFailure()', 'always()', or 'default()' - if empty will default to deleting the pod after `activeDeadlineSeconds` has passed.
-* **activeDeadlineSeconds** If `podRetention` is set to 'never()' or 'onFailure()', pod is deleted after this deadline is passed.
-* **idleMinutes** Allows the Pod to remain active for reuse until the configured number of minutes has passed since the last step was executed on it.
+* **podRetention** Controls the behavior of keeping agent pods. Can be 'never()', 'onFailure()', 'always()', or 'default()' - if empty will default to deleting the pod after `activeDeadlineSeconds` has passed.
+* **activeDeadlineSeconds** If `podRetention` is set to `never()` or `onFailure()`, the pod is deleted after this deadline is passed.
+* **idleMinutes** Allows the pod to remain active for reuse until the configured number of minutes has passed since the last step was executed on it. Use this only when defining a pod template in the user interface.
+* **showRawYaml** Enable or disable the output of the raw pod manifest. Defaults to `true`
+* **runAsUser** The user ID to run all containers in the pod as.
+* **runAsGroup** The group ID to run all containers in the pod as. 
+* **hostNetwork** Use the hosts network.
+* **workspaceVolume** The type of volume to use for the workspace.
+  * `emptyDirWorkspaceVolume` (default): an empty dir allocated on the host machine
+  * `dynamicPVC()` : a persistent volume claim managed dynamically. It is deleted at the same time as the pod.
+  * `hostPathWorkspaceVolume()` : a host path volume
+  * `nfsWorkspaceVolume()` : a nfs volume
+  * `persistentVolumeClaimWorkspaceVolume()` : an existing persistent volume claim by name.
 
-The `containerTemplate` is a template of container that will be added to the pod. Again, its configurable via the user interface or via pipeline and allows you to set the following fields:
+## Container template
+
+Container templates are part of pod. They can be configured via the user interface or in a pipeline and allow you to set the following fields:
 
 * **name** The name of the container.
 * **image** The image of the container.
 * **envVars** Environment variables that are applied to the container **(supplementing and overriding env vars that are set on pod level)**.
     * **envVar** An environment variable whose value is defined inline.
     * **secretEnvVar** An environment variable whose value is derived from a Kubernetes secret.
-* **command** The command the container will execute.
-* **args** The arguments passed to the command.
+* **command** The command the container will execute. Will overwrite the Docker entrypoint. A typical value is `sleep`.
+* **args** The arguments passed to the command. A typical value is `99999999`.
 * **ttyEnabled** Flag to mark that tty should be enabled.
 * **livenessProbe** Parameters to be added to a exec liveness probe in the container (does not support httpGet liveness probes)
 * **ports** Expose ports on the container.
+* **alwaysPullImage** The container will pull the image upon starting.
+* **runAsUser** The user ID to run the container as.
+* **runAsGroup** The group ID to run the container as.
 
 #### Specifying a different default agent connection timeout
 
-By default, the agent connection timeout is set to 100 seconds. In some case, you would like to set a different value, if so you can set the system property `org.csanchez.jenkins.plugins.kubernetes.PodTemplate.connectionTimeout` to a different value. Please read [Features controlled by system properties](https://wiki.jenkins.io/display/JENKINS/Features+controlled+by+system+properties) page to know how to setup system properties within Jenkins.
+By default, the agent connection timeout is set to 1000 seconds. It can be customized using a system property. Please refer to the section below.
 
-
-#### Using yaml to Define Pod Templates
+#### Using yaml to define Pod Templates
 
 In order to support any possible value in Kubernetes `Pod` object, we can pass a yaml snippet that will be used as a base
-for the template. If any other properties are set outside of the yaml they will take precedence.
+for the template. If any other properties are set outside the YAML, they will take precedence.
 
 ```groovy
-def label = "mypod-${UUID.randomUUID().toString()}"
-podTemplate(label: label, yaml: """
-apiVersion: v1
-kind: Pod
-metadata:
-  labels:
-    some-label: some-label-value
-spec:
-  containers:
-  - name: busybox
-    image: busybox
-    command:
-    - cat
-    tty: true
-"""
-) {
-    node (label) {
+podTemplate(yaml: '''
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels: 
+        some-label: some-label-value
+    spec:
+      containers:
+      - name: busybox
+        image: busybox
+        command:
+        - sleep
+        args:
+        - 99d
+    ''') {
+    node(POD_LABEL) {
       container('busybox') {
-        sh "hostname"
+        echo POD_CONTAINER // displays 'busybox'
+        sh 'hostname'
       }
     }
 }
 ```
 
-You can use [`readFile`](https://jenkins.io/doc/pipeline/steps/workflow-basic-steps/#code-readfile-code-read-file-from-workspace) or [`readTrusted`](https://jenkins.io/doc/pipeline/steps/coding-webhook/#readtrusted-read-trusted-file-from-scm) steps to load the yaml from a file.  It is also accessible from this plugin's configuration panel in the Jenkins console.
+You can use [`readFile`](https://www.jenkins.io/doc/pipeline/steps/workflow-basic-steps/#readfile-read-file-from-workspace) or [`readTrusted`](https://jenkins.io/doc/pipeline/steps/coding-webhook/#readtrusted-read-trusted-file-from-scm) steps to load the yaml from a file.
+Also note that in declarative pipelines the `yamlFile` can be used (see this [example](examples/declarative_from_yaml_file)).
 
-#### Liveness Probe Usage
+##### Example
+
+`pod.yaml`
+```yaml
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: maven
+    image: maven:3.8.1-jdk-8
+    command:
+    - sleep
+    args:
+    - 99d
+  - name: golang
+    image: golang:1.16.5
+    command:
+    - sleep
+    args:
+    - 99d
+```
+
+`Jenkinsfile`
 ```groovy
-containerTemplate(name: 'busybox', image: 'busybox', ttyEnabled: true, command: 'cat', livenessProbe: containerLivenessProbe( execArgs: 'some --command', initialDelaySeconds: 30, timeoutSeconds: 1, failureThreshold: 3, periodSeconds: 10, successThreshold: 1))
+podTemplate(yaml: readTrusted('pod.yaml')) {
+  node(POD_LABEL) {
+    // ...
+  }
+}
+```
+
+### Liveness Probe Usage
+```groovy
+containerTemplate(name: 'busybox', image: 'busybox', command: 'sleep', args: '99d',
+                  livenessProbe: containerLivenessProbe(execArgs: 'some --command', initialDelaySeconds: 30, timeoutSeconds: 1, failureThreshold: 3, periodSeconds: 10, successThreshold: 1)
+)
 ```
 See [Defining a liveness command](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-probes/#defining-a-liveness-command) for more details.
 
-### Pod template inheritance
+# Inheritance
 
-A podTemplate may or may not inherit from an existing template. This means that the podTemplate will inherit node selector, service account, image pull secrets, containerTemplates and volumes from the template it inheritsFrom.
+## Overview
 
-**yaml** is **never** merged, if is defined in the child pod template that one will be used and not the parent one.
+A pod template may or may not inherit from an existing template.
+This means that the pod template will inherit node selector, service account, image pull secrets, container templates
+and volumes from the template it inherits from.
+
+**yaml** is merged according to the value of `yamlMergeStrategy`.
 
 **Service account** and **Node selector** when are overridden completely substitute any possible value found on the 'parent'.
 
-**Container templates** that are added to the podTemplate, that has a matching containerTemplate (a containerTemplate with the same name) in the 'parent' template, will inherit the configuration of the parent containerTemplate.
-If no matching containerTemplate is found, the template is added as is.
+**Container templates** that are added to the podTemplate, that has a matching containerTemplate (a container template
+with the same name) in the 'parent' template, will inherit the configuration of the parent containerTemplate.
+If no matching container template is found, the template is added as is.
 
 **Volume** inheritance works exactly as **Container templates**.
 
 **Image Pull Secrets** are combined (all secrets defined both on 'parent' and 'current' template are used).
 
-In the example below, we will inherit the podTemplate we created previously, and will just override the version of 'maven' so that it uses jdk-7 instead:
+In the example below, we will inherit from a pod template we created previously, and will just override the version of
+`maven` so that it uses jdk-11 instead:
+
+![image](images/mypod.png)
 
 ```groovy
-podTemplate(label: 'anotherpod', inheritFrom: 'mypod'  containers: [
-    containerTemplate(name: 'maven', image: 'maven:3.3.9-jdk-7-alpine')
+podTemplate(inheritFrom: 'mypod', containers: [
+    containerTemplate(name: 'maven', image: 'maven:3.8.1-jdk-11')
   ]) {
-
-      //Let's not repeat ourselves and ommit this part
+  node(POD_LABEL) {
+    …
+  }
 }
 ```
 
-Note that we only need to specify the things that are different. So, `ttyEnabled` and `command` are not specified, as they are inherited. Also the `golang` container will be added as is defined in the 'parent' template.
+Or in declarative pipeline
 
-#### Multiple Pod template inheritance
+```groovy
+pipeline {
+  agent {
+    kubernetes {
+      inheritFrom 'mypod'
+      yaml '''
+      spec:
+        containers:
+        - name: maven
+          image: maven:3.8.1-jdk-11
+'''
+      …
+    }
+  }
+  stages {
+    …
+  }
+}
+```
 
-Field `inheritFrom` may refer a single podTemplate or multiple separated by space. In the later case each template will be processed in the order they appear in the list *(later items overriding earlier ones)*.
+Note that we only need to specify the things that are different. So, `command` and `arguments` are not specified, as
+they are inherited.
+Also, the `golang` container will be added as defined in the 'parent' template.
+
+## Multiple Pod template inheritance
+
+Field `inheritFrom` may refer a single podTemplate or multiple separated by space. In the later case each template will
+be processed in the order they appear in the list *(later items overriding earlier ones)*.
 In any case if the referenced template is not found it will be ignored.
 
 
-#### Nesting Pod templates
+## Nesting Pod templates
 
-Field `inheritFrom` provides an easy way to compose podTemplates that have been pre-configured. In many cases it would be useful to define and compose podTemplates directly in the pipeline using groovy.
+Field `inheritFrom` provides an easy way to compose podTemplates that have been pre-configured. In many cases it would
+be useful to define and compose podTemplates directly in the pipeline using groovy.
 This is made possible via nesting. You can nest multiple pod templates together in order to compose a single one.
 
-The example below composes two different podTemplates in order to create one with maven and docker capabilities.
+The example below composes two different pod templates in order to create one with maven and docker capabilities.
 
-    podTemplate(label: 'docker', containers: [containerTemplate(image: 'docker', name: 'docker', command: 'cat', ttyEnabled: true)]) {
-        podTemplate(label: 'maven', containers: [containerTemplate(image: 'maven', name: 'maven', command: 'cat', ttyEnabled: true)]) {
-            // do stuff
-        }
+```groovy
+podTemplate(containers: [containerTemplate(image: 'docker', name: 'docker', command: 'cat', ttyEnabled: true)]) {
+    podTemplate(containers: [containerTemplate(image: 'maven', name: 'maven', command: 'cat', ttyEnabled: true)]) {
+      node(POD_LABEL) { // gets a pod with both docker and maven
+        …
+      }
     }
+}
+```
 
-This feature is extra useful, pipeline library developers as it allows you to wrap podTemplates into functions and let users, nest those functions according to their needs.
+This feature is extra useful, pipeline library developers as it allows you to wrap pod templates into functions and let
+users nest those functions according to their needs.
 
 For example one could create functions for their podTemplates and import them for use.
-Say heres our file `src/com/foo/utils/PodTemplates.groovy`:
+Say here's our file `src/com/foo/utils/PodTemplates.groovy`:
 ```groovy
 package com.foo.utils
 
 public void dockerTemplate(body) {
-  def label = "worker-${UUID.randomUUID().toString()}"
-  podTemplate(label: label,
-        containers: [containerTemplate(name: 'docker', image: 'docker', command: 'cat', ttyEnabled: true)],
+  podTemplate(
+        containers: [containerTemplate(name: 'docker', image: 'docker', command: 'sleep', args: '99d')],
         volumes: [hostPathVolume(hostPath: '/var/run/docker.sock', mountPath: '/var/run/docker.sock')]) {
-    body.call(label)
+    body.call()
 }
 }
 
 public void mavenTemplate(body) {
-  def label = "worker-${UUID.randomUUID().toString()}"
-  podTemplate(label: label,
-        containers: [containerTemplate(name: 'maven', image: 'maven', command: 'cat', ttyEnabled: true)],
+  podTemplate(
+        containers: [containerTemplate(name: 'maven', image: 'maven', command: 'sleep', args: '99d')],
         volumes: [secretVolume(secretName: 'maven-settings', mountPath: '/root/.m2'),
-                  persistentVolumeClaim(claimName: 'maven-local-repo', mountPath: '/root/.m2nrepo')]) {
-    body.call(label)
+                  persistentVolumeClaim(claimName: 'maven-local-repo', mountPath: '/root/.m2repo')]) {
+    body.call()
 }
 }
 
 return this
 ```
 
-Then consumers of the library could just express the need for a maven pod with docker capabilities by combining the two, however once again, you will need to express the specific container you wish to execute commands in.  You can **NOT** omit the `node` statement.
+Then consumers of the library could just express the need for a maven pod with docker capabilities by combining the two,
+however once again, you will need to express the specific container you wish to execute commands in.
+You can **NOT** omit the `node` statement.
 
-Note that you **must** use the innermost generated label in order get a node which has all the outer pods available on the node as shown in this example:
+Note that `POD_LABEL` will be the innermost generated label to get a node which has all the outer pods available on the
+node, as shown in this example:
 
 ```groovy
 import com.foo.utils.PodTemplates
 
-slaveTemplates = new PodTemplates()
+podTemplates = new PodTemplates()
 
-slaveTemplates.dockerTemplate {
-  slaveTemplates.mavenTemplate { label ->
-    node(label) {
+podTemplates.dockerTemplate {
+  podTemplates.mavenTemplate {
+    node(POD_LABEL) {
       container('docker') {
-        sh 'echo hello from docker'
+        sh "echo hello from $POD_CONTAINER" // displays 'hello from docker'
       }
       container('maven') {
-        sh 'echo hello from maven'
+        sh "echo hello from $POD_CONTAINER" // displays 'hello from maven'
       }
      }
   }
 }
 ```
 
-#### Using a different namespace
+In scripted pipelines, there are cases where this implicit inheritance via nested declaration is not wanted or another
+explicit inheritance is preferred.
+In this case, use `inheritFrom ''` to remove any inheritance, or `inheritFrom 'otherParent'` to override it.
 
-There might be cases, where you need to have the agent pod run inside a different namespace than the one configured with the cloud definition.
-For example you may need the agent to run inside an `ephemeral` namespace for the sake of testing.
-For those cases you can explicitly configure a namespace either using the ui or the pipeline.
-
-#### Specifying a different shell command other than /bin/sh
-
-By default, the shell command is /bin/sh. In some case, you would like to use another shell command like /bin/bash.
-
-```groovy
-podTemplate(label: my-label) {
-  node(my-label) {
-    stage('Run specific shell') {
-      container(name:'mycontainer', shell:'/bin/bash') {
-        sh 'echo hello world'
-      }
-    }
-  }
-}
-```
-
-## Container Configuration
-When configuring a container in a pipeline podTemplate the following options are available:
-
-```groovy
-podTemplate(label: 'mypod', cloud: 'kubernetes', containers: [
-    containerTemplate(
-        name: 'mariadb',
-        image: 'mariadb:10.1',
-        ttyEnabled: true,
-        privileged: false,
-        alwaysPullImage: false,
-        workingDir: '/home/jenkins',
-        resourceRequestCpu: '50m',
-        resourceLimitCpu: '100m',
-        resourceRequestMemory: '100Mi',
-        resourceLimitMemory: '200Mi',
-        envVars: [
-            envVar(key: 'MYSQL_ALLOW_EMPTY_PASSWORD', value: 'true'),
-            secretEnvVar(key: 'MYSQL_PASSWORD', secretName: 'mysql-secret', secretKey: 'password'),
-            ...
-        ],
-        ports: [portMapping(name: 'mysql', containerPort: 3306, hostPort: 3306)]
-    ),
-    ...
-],
-volumes: [
-    emptyDirVolume(mountPath: '/etc/mount1', memory: false),
-    secretVolume(mountPath: '/etc/mount2', secretName: 'my-secret'),
-    configMapVolume(mountPath: '/etc/mount3', configMapName: 'my-config'),
-    hostPathVolume(mountPath: '/etc/mount4', hostPath: '/mnt/my-mount'),
-    nfsVolume(mountPath: '/etc/mount5', serverAddress: '127.0.0.1', serverPath: '/', readOnly: true),
-    persistentVolumeClaim(mountPath: '/etc/mount6', claimName: 'myClaim', readOnly: true)
-],
-imagePullSecrets: [ 'pull-secret' ],
-annotations: [
-    podAnnotation(key: "my-key", value: "my-value")
-    ...
-]) {
-   ...
-}
-
-```
-
-## Declarative Pipeline
-
-Declarative Pipeline support requires Jenkins 2.66+
+# Declarative Pipeline
 
 Declarative agents can be defined from yaml
 
@@ -387,27 +543,25 @@ Declarative agents can be defined from yaml
 pipeline {
   agent {
     kubernetes {
-      label 'mypod'
-      defaultContainer 'jnlp'
-      yaml """
-apiVersion: v1
-kind: Pod
-metadata:
-  labels:
-    some-label: some-label-value
-spec:
-  containers:
-  - name: maven
-    image: maven:alpine
-    command:
-    - cat
-    tty: true
-  - name: busybox
-    image: busybox
-    command:
-    - cat
-    tty: true
-"""
+      yaml '''
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          labels:
+            some-label: some-label-value
+        spec:
+          containers:
+          - name: maven
+            image: maven:alpine
+            command:
+            - cat
+            tty: true
+          - name: busybox
+            image: busybox
+            command:
+            - cat
+            tty: true
+        '''
     }
   }
   stages {
@@ -427,17 +581,15 @@ spec:
 
 or using `yamlFile` to keep the pod template in a separate `KubernetesPod.yaml` file
 
-```
+```groovy
 pipeline {
   agent {
     kubernetes {
-      label 'mypod'
-      defaultContainer 'jnlp'
       yamlFile 'KubernetesPod.yaml'
     }
   }
   stages {
-      ...
+    …
   }
 }
 ```
@@ -449,26 +601,48 @@ pipeline {
   agent {
     kubernetes {
       //cloud 'kubernetes'
-      label 'mypod'
       containerTemplate {
         name 'maven'
-        image 'maven:3.3.9-jdk-8-alpine'
-        ttyEnabled true
-        command 'cat'
+        image 'maven:3.8.1-jdk-8'
+        command 'sleep'
+        args '99d'
       }
     }
   }
-  stages { ... }
+  stages {
+    …
+  }
+}
+```
+
+Run steps within a container by default. Steps will be nested within an implicit `container(name) {...}` block instead
+of being executed in the jnlp container.
+
+```groovy
+pipeline {
+  agent {
+    kubernetes {
+      defaultContainer 'maven'
+      yamlFile 'KubernetesPod.yaml'
+    }
+  }
+
+  stages {
+    stage('Run maven') {
+      steps {
+        sh 'mvn -version'
+      }
+    }
+  }
 }
 ```
 
 Run the Pipeline or individual stage within a custom workspace - not required unless explicitly stated.
 
-```
+```groovy
 pipeline {
   agent {
     kubernetes {
-      label 'mypod'
       customWorkspace 'some/other/path'
       defaultContainer 'maven'
       yamlFile 'KubernetesPod.yaml'
@@ -486,6 +660,57 @@ pipeline {
 }
 ```
 
+## Default inheritance
+Unlike scripted k8s template, declarative templates do not inherit from parent template.
+Since the agents declared at stage level can override a global agent, implicit inheritance was leading to confusion.
+
+You need to explicitly declare the inheritance if necessary using the field `inheritFrom`.
+
+In the following example, `nested-pod` will only contain the `maven` container.
+
+```groovy
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+        spec:
+        containers:
+        - name: golang
+            image: golang:1.16.5
+            command:
+            - sleep
+            args:
+            - 99d
+        '''
+    }
+  }
+  stages {
+    stage('Run maven') {
+        agent {
+            kubernetes {
+                yaml '''
+                    spec:
+                    containers:
+                    - name: maven
+                      image: maven:3.8.1-jdk-8
+                      command:
+                      - sleep
+                      args:
+                      - 99d
+                    '''
+            }
+        }
+      steps {
+        …
+      }
+    }
+  }
+}
+
+```
+
+# Misc.
+
 ## Accessing container logs from the pipeline
 
 If you use the `containerTemplate` to run some service in the background
@@ -495,7 +720,7 @@ requested container to the build log.
 
 #### Required Parameters
 * **name** the name of the container to get logs from, as defined in `podTemplate`. Parameter name
-can be ommited in simple usage:
+can be omitted in simple usage:
 
 ```groovy
 containerLog 'mongodb'
@@ -509,6 +734,50 @@ containerLog 'mongodb'
 
 Also see the online help and [examples/containerLog.groovy](examples/containerLog.groovy).
 
+# Features controlled using system properties
+
+Please read [Features controlled by system properties](https://www.jenkins.io/doc/book/managing/system-properties/) page to know how to set up system properties within Jenkins.
+
+* `KUBERNETES_JENKINS_URL` : Jenkins URL to be used by agents. This is meant to be used for OEM integration.
+* `io.jenkins.plugins.kubernetes.disableNoDelayProvisioning` (since 1.19.1) Whether to disable the no-delay provisioning strategy the plugin uses (defaults to `false`).
+* `jenkins.host.address` : (for unit tests) controls the host agents should use to contact Jenkins
+* `org.csanchez.jenkins.plugins.kubernetes.PodTemplate.connectionTimeout` : The time in seconds to wait before considering the pod scheduling has failed (defaults to `1000`)
+* `org.csanchez.jenkins.plugins.kubernetes.pipeline.ContainerExecDecorator.stdinBufferSize` : stdin buffer size in bytes for commands sent to Kubernetes exec api. A low value will cause slowness in commands executed. A higher value will consume more memory (defaults to `16*1024`)
+* `org.csanchez.jenkins.plugins.kubernetes.pipeline.ContainerExecDecorator.websocketConnectionTimeout` : Time to wait for the websocket used by `container` step to connect (defaults to `30`)
+
+# Running on OpenShift
+
+## Random UID problem
+
+OpenShift runs containers using a _random_ UID that is overriding what is specified in Docker images.
+For this reason, you may end up with the following warning in your build
+
+```
+[WARNING] HOME is set to / in the jnlp container. You may encounter troubles when using tools or ssh client. This usually happens if the uid doesnt have any entry in /etc/passwd. Please add a user to your Dockerfile or set the HOME environment variable to a valid directory in the pod template definition.
+```
+
+At the moment the jenkinsci agent image is not built for OpenShift and will issue this warning.
+
+This issue can be circumvented in various ways:
+* build a docker image for OpenShift in order to behave when running using an arbitrary uid.
+* override HOME environment variable in the pod spec to use `/home/jenkins` and mount a volume to `/home/jenkins` to ensure the user running the container can write to it
+
+See this [example](examples/openshift-home-yaml.groovy) configuration.
+
+## Running with OpenShift 3
+
+OpenShift 3 is based on an older version of Kubernetes, which is not anymore directly supported since Kubernetes plugin version 1.26.0.
+
+To get agents working for Openshift 3, add this `Node Selector` to your Pod Templates:
+```
+beta.kubernetes.io/os=linux
+```
+
+# Windows support
+
+You can run pods on Windows if your cluster has Windows nodes.
+See the [example](src/main/resources/org/csanchez/jenkins/plugins/kubernetes/pipeline/samples/windows.groovy).
+
 # Constraints
 
 Multiple containers can be defined in a pod.
@@ -519,19 +788,7 @@ Other containers must run a long running process, so the container does not exit
 just runs something and exit then it should be overridden with something like `cat` with `ttyEnabled: true`.
 
 **WARNING**
-If you want to provide your own Docker image for the JNLP slave, you **must** name the container `jnlp` so it overrides the default one. Failing to do so will result in two slaves trying to concurrently connect to the master.
-
-# Over provisioning flags
-
-By default, Jenkins spawns agents conservatively. Say, if there are 2 builds in queue, it won't spawn 2 executors immediately.
-It will spawn one executor and wait for sometime for the first executor to be freed before deciding to spawn the second executor.
-Jenkins makes sure every executor it spawns is utilized to the maximum.
-If you want to override this behaviour and spawn an executor for each build in queue immediately without waiting,
-you can use these flags during Jenkins startup:
-
-    -Dhudson.slaves.NodeProvisioner.initialDelay=0
-    -Dhudson.slaves.NodeProvisioner.MARGIN=50
-    -Dhudson.slaves.NodeProvisioner.MARGIN0=0.85
+If you want to provide your own Docker image for the inbound agent, you **must** name the container `jnlp` so it overrides the default one. Failing to do so will result in two agents trying to concurrently connect to the controller.
 
 # Configuration on minikube
 
@@ -556,7 +813,7 @@ Create a cluster
 
     gcloud container clusters create jenkins --num-nodes 1 --machine-type g1-small
 
-and note the admin password and server certitifate.
+and note the admin password and server certificate.
 
 Or use Google Developer Console to create a Container Engine cluster, then run
 
@@ -566,7 +823,7 @@ Or use Google Developer Console to create a Container Engine cluster, then run
 the last command will output kubernetes cluster configuration including API server URL, admin password and root certificate
 
 
-# Debugging
+# Troubleshooting
 
 First watch if the Jenkins agent pods are started.
 Make sure you are in the correct cluster and namespace.
@@ -581,7 +838,7 @@ If they are `Running`, use `logs` to get the log output
 
     kubectl logs -f pods/my-jenkins-agent jnlp
 
-If pods are not started or for any other error, check the logs on the master side.
+If pods are not started or for any other error, check the logs on the controller side.
 
 For more detail, configure a new [Jenkins log recorder](https://wiki.jenkins-ci.org/display/JENKINS/Logging) for
 `org.csanchez.jenkins.plugins.kubernetes` at `ALL` level.
@@ -594,9 +851,81 @@ at `DEBUG` level.
 
     kubectl get pods -o name --selector=jenkins=slave --all-namespaces  | xargs -I {} kubectl delete {}
 
+## Pipeline `sh` step hangs when multiple containers are used
+To debug this you need to set `-Dorg.jenkinsci.plugins.durabletask.BourneShellScript.LAUNCH_DIAGNOSTICS=true` system property
+and then restart the pipeline. Most likely in the console log you will see the following:
+```console
+sh: can't create /home/jenkins/agent/workspace/thejob@tmp/durable-e0b7cd27/jenkins-log.txt: Permission denied
+sh: can't create /home/jenkins/agent/workspace/thejob@tmp/durable-e0b7cd27/jenkins-result.txt.tmp: Permission denied
+mv: can't rename '/home/jenkins/agent/workspace/thejob@tmp/durable-e0b7cd27/jenkins-result.txt.tmp': No such file or directory
+touch: /home/jenkins/agent/workspace/thejob@tmp/durable-e0b7cd27/jenkins-log.txt: Permission denied
+touch: /home/jenkins/agent/workspace/thejob@tmp/durable-e0b7cd27/jenkins-log.txt: Permission denied
+touch: /home/jenkins/agent/workspace/thejob@tmp/durable-e0b7cd27/jenkins-log.txt: Permission denied
+```
+Usually this happens when UID of the user in `jnlp` container differs from the one in another container(s). 
+All containers you use should have the same UID of the user, also this can be achieved by setting `securityContext`:
+```yaml
+apiVersion: v1
+kind: Pod
+spec:
+  securityContext:
+    runAsUser: 1000 # default UID of jenkins user in agent image
+  containers:
+  - name: maven
+    image: maven:3.8.1-jdk-8
+    command:
+    - cat
+    tty: true
+```
+
+## Using WebSockets with a Jenkins controller with self-signed HTTPS certificate
+
+Using WebSockets is the easiest and recommended way to establish the connection between agents and a Jenkins controller running outside the cluster.
+However, if your Jenkins controller has HTTPS configured with self-signed certificate, you'll need to make sure the agent container trusts the CA.
+To do that, you can extend the `jenkins/inbound-agent` image and add your certificate as follows:
+
+```Dockerfile
+FROM jenkins/inbound-agent:jdk8
+
+USER root
+
+ADD cert.pem /tmp/cert.pem
+
+RUN keytool -noprompt -storepass changeit \
+  -keystore "$JAVA_HOME/jre/lib/security/cacerts" \
+  -import -file /tmp/cert.pem -alias jenkinsMaster && \
+  rm -f /tmp/cert.pem
+
+USER jenkins
+```
+
+Or, if you are using JDK 11:
+
+```Dockerfile
+FROM jenkins/inbound-agent:jdk11
+
+USER root
+
+ADD cert.pem /tmp/cert.pem
+
+RUN keytool -noprompt -storepass changeit -cacerts \
+  -import -file /tmp/cert.pem -alias jenkinsMaster && \
+  rm -f /tmp/cert.pem
+
+USER jenkins
+```
+
+Then, use it as the `jnlp` container for the pod template as usual. No command or args need to be specified.
+
+> **Notes:**
+>
+> * Support for using WebSockets with JDK 11 was added in the Remoting v4.11, so make sure your base image is new enough. See [here](https://issues.jenkins.io/browse/JENKINS-61212) for more information.
+>
+> * When using the WebSocket mode, the `-disableHttpsCertValidation` on the `jenkins/inbound-agent` becomes unavailable, as well as `-cert`, and that's why you have to extend the docker image.
+
 # Building and Testing
 
-Integration tests will use the currently configured context autodetected from kube config file or service account.
+Integration tests will use the currently configured context auto-detected from kube config file or service account.
 
 ## Manual Testing
 
@@ -639,32 +968,39 @@ just run as
 
     mvn clean install -Pmicrok8s
 
+This assumes that from a pod, the host system is accessible as IP address `10.1.1.1`.
+It might be some variant such as `10.1.37.1`,
+in which case you would need to set `-DconnectorHost=… -Djenkins.host.address=…` instead.
+To see the actual address, try:
+
+```bash
+ifdata -pa cni0
+```
+
+Or to verify the networking inside a pod:
+
+```bash
+kubectl run --rm --image=praqma/network-multitool --restart=Never --attach sh ip route | fgrep 'default via'
+```
+
 ### Integration Tests in a Different Cluster
 
-Ensure you create the namespaces and roles with the following commands, then run the tests
-in namespace `kubernetes-plugin` with the service account `jenkins`
-(edit `src/test/kubernetes/service-account.yml` to use a different service account)
+Try
 
-```
-kubectl create namespace kubernetes-plugin-test
-kubectl create namespace kubernetes-plugin-test-overridden-namespace
-kubectl create namespace kubernetes-plugin-test-overridden-namespace2
-kubectl apply -n kubernetes-plugin-test -f src/main/kubernetes/service-account.yml
-kubectl apply -n kubernetes-plugin-test-overridden-namespace -f src/main/kubernetes/service-account.yml
-kubectl apply -n kubernetes-plugin-test-overridden-namespace2 -f src/main/kubernetes/service-account.yml
-kubectl apply -n kubernetes-plugin-test -f src/test/kubernetes/service-account.yml
-kubectl apply -n kubernetes-plugin-test-overridden-namespace -f src/test/kubernetes/service-account.yml
-kubectl apply -n kubernetes-plugin-test-overridden-namespace2 -f src/test/kubernetes/service-account.yml
+```bash
+bash test-in-k8s.sh
 ```
 
 # Docker image
 
 Docker image for Jenkins, with plugin installed.
-Based on the [official image](https://registry.hub.docker.com/_/jenkins/).
+Based on the [official image](https://hub.docker.com/r/jenkins/jenkins/).
 
 ## Running the Docker image
 
-    docker run --rm --name jenkins -p 8080:8080 -p 50000:50000 -v /var/jenkins_home csanchez/jenkins-kubernetes
+```bash
+docker run --rm --name jenkins -p 8080:8080 -p 50000:50000 -v /var/jenkins_home csanchez/jenkins-kubernetes
+```
 
 
 # Running in Kubernetes
@@ -676,23 +1012,31 @@ and using a service account to authenticate to Kubernetes API.
 
 A local testing cluster with one node can be created with [minikube](https://github.com/kubernetes/minikube)
 
-    minikube start
+```bash
+minikube start
+```
 
 You may need to set the correct permissions for host mounted volumes
 
-    minikube ssh
-    sudo chown 1000:1000 /tmp/hostpath-provisioner/pvc-*
+```bash
+minikube ssh
+sudo chown 1000:1000 /tmp/hostpath-provisioner/pvc-*
+```
 
 Then create the Jenkins namespace, controller and Service with
 
-    kubectl create namespace kubernetes-plugin
-    kubectl config set-context $(kubectl config current-context) --namespace=kubernetes-plugin
-    kubectl create -f src/main/kubernetes/service-account.yml
-    kubectl create -f src/main/kubernetes/jenkins.yml
+```bash
+kubectl create namespace kubernetes-plugin
+kubectl config set-context $(kubectl config current-context) --namespace=kubernetes-plugin
+kubectl create -f src/main/kubernetes/service-account.yml
+kubectl create -f src/main/kubernetes/jenkins.yml
+```
 
 Get the url to connect to with
 
-    minikube service jenkins --namespace kubernetes-plugin --url
+```bash
+minikube service jenkins --namespace kubernetes-plugin --url
+```
 
 ## Running in Google Container Engine GKE
 
@@ -700,10 +1044,12 @@ Assuming you created a Kubernetes cluster named `jenkins` this is how to run bot
 
 Creating all the elements and setting the default namespace
 
-    kubectl create namespace kubernetes-plugin
-    kubectl config set-context $(kubectl config current-context) --namespace=kubernetes-plugin
-    kubectl create -f src/main/kubernetes/service-account.yml
-    kubectl create -f src/main/kubernetes/jenkins.yml
+```bash
+kubectl create namespace kubernetes-plugin
+kubectl config set-context $(kubectl config current-context) --namespace=kubernetes-plugin
+kubectl create -f src/main/kubernetes/service-account.yml
+kubectl create -f src/main/kubernetes/jenkins.yml
+```
 
 Connect to the ip of the network load balancer created by Kubernetes, port 80.
 Get the ip (in this case `104.197.19.100`) with `kubectl describe services/jenkins`
@@ -747,8 +1093,8 @@ Set `Container Cap` to a reasonable number for tests, i.e. 3.
 
 Add an image with
 
-* Docker image: `jenkins/jnlp-slave`
-* Jenkins agent root directory: `/home/jenkins`
+* Docker image: `jenkins/inbound-agent`
+* Jenkins agent root directory: `/home/jenkins/agent`
 
 ![image](configuration.png)
 
@@ -756,7 +1102,9 @@ Now it is ready to be used.
 
 Tearing it down
 
-    kubectl delete namespace/kubernetes-plugin
+```bash
+kubectl delete namespace/kubernetes-plugin
+```
 
 
 ## Customizing the deployment
@@ -767,20 +1115,22 @@ Modify file `./src/main/kubernetes/jenkins.yml` with desired limits
 
 ```yaml
 resources:
-      limits:
-        cpu: 1
-        memory: 1Gi
-      requests:
-        cpu: 0.5
-        memory: 500Mi
+  limits:
+    cpu: 1
+    memory: 1Gi
+  requests:
+    cpu: 0.5
+    memory: 500Mi
 ```
 
 Note: the JVM will use the memory `requests` as the heap limit (-Xmx)
 
 ## Building
 
-    docker build -t csanchez/jenkins-kubernetes .
-
+```bash
+docker build -t csanchez/jenkins-kubernetes .
+```
+ 
 # Related Projects
 
 * [Kubernetes Pipeline plugin](https://github.com/jenkinsci/kubernetes-pipeline-plugin): pipeline extension to provide native support for using Kubernetes pods, secrets and volumes to perform builds

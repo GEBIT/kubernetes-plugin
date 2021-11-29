@@ -1,8 +1,7 @@
 pipeline {
   agent {
     kubernetes {
-      label 'declarativefromyaml-pod'
-      yaml """
+      yaml '''
 metadata:
   namespace: kubernetes-plugin-test-overridden-namespace
   labels:
@@ -30,7 +29,7 @@ spec:
     env:
     - name: CONTAINER_ENV_VAR
       value: busybox
-"""
+'''
     }
   }
   stages {

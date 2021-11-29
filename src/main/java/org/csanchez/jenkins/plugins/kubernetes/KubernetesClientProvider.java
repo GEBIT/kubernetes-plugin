@@ -1,100 +1,77 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
 import java.io.IOException;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.UnrecoverableKeyException;
-import java.security.cert.CertificateEncodingException;
-import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Arrays;
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.google.common.base.Objects;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import hudson.model.PeriodicWork;
 import io.fabric8.kubernetes.client.HttpClientAware;
-import io.fabric8.kubernetes.client.KubernetesClient;
 import okhttp3.Dispatcher;
 import okhttp3.OkHttpClient;
+import org.jenkinsci.plugins.kubernetes.auth.KubernetesAuthException;
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 
 import hudson.Extension;
 import hudson.XmlFile;
-import hudson.model.AsyncPeriodicWork;
 import hudson.model.Saveable;
-import hudson.model.TaskListener;
 import hudson.model.listeners.SaveableListener;
+import io.fabric8.kubernetes.client.KubernetesClient;
 import jenkins.model.Jenkins;
 
 /**
  * Manages the Kubernetes client creation per cloud
  */
-final class KubernetesClientProvider {
+public class KubernetesClientProvider {
 
     private static final Logger LOGGER = Logger.getLogger(KubernetesClientProvider.class.getName());
 
     /**
-     * How many clouds can we connect to, default to 10
+     * Client expiration in seconds.
+     *
+     * Some providers such as Amazon EKS use a token with 15 minutes expiration, so expire clients after 10 minutes.
      */
-    private static final Integer CACHE_SIZE = Integer
-            .getInteger(KubernetesClientProvider.class.getPackage().getName() + ".clients.cacheSize", 10);
+    private static final long CACHE_EXPIRATION = Long.getLong(
+            KubernetesClientProvider.class.getPackage().getName() + ".clients.cacheExpiration", TimeUnit.MINUTES.toSeconds(10));
 
-    /**
-     * Client expiration in seconds, default to one day
-     */
-    private static final Integer CACHE_EXPIRATION = Integer.getInteger(
-            KubernetesClientProvider.class.getPackage().getName() + ".clients.cacheExpiration", 24 * 60 * 60);
-
-    private static final List<KubernetesClient> expiredClients = Collections.synchronizedList(new ArrayList());
-
-    private static final Cache<String, Client> clients = CacheBuilder
-            .newBuilder() //
-            .maximumSize(CACHE_SIZE) //
-            .expireAfterWrite(CACHE_EXPIRATION, TimeUnit.SECONDS) //
-            .removalListener(rl -> {
-                LOGGER.log(Level.FINE, "{0} cache : Removing entry for {1}", new Object[] {KubernetesClient.class.getSimpleName(), rl.getKey()});
-                KubernetesClient client = ((Client) rl.getValue()).getClient();
+    private static final Cache<String, Client> clients = Caffeine.newBuilder()
+            .expireAfterWrite(CACHE_EXPIRATION, TimeUnit.SECONDS)
+            .removalListener( (key, value, cause) -> {
+                Client client = (Client) value;
                 if (client != null) {
-                    if (client instanceof HttpClientAware) {
-                        if (!gracefulClose(client, ((HttpClientAware) client).getHttpClient())) {
-                            expiredClients.add(client);
-                        }
-                    } else {
-                        LOGGER.log(Level.WARNING, "{0} is not {1}, forcing close", new Object[] {client.toString(), HttpClientAware.class.getSimpleName()});
-                        client.close();
-                    }
+                    LOGGER.log(Level.FINE, () -> "Expiring Kubernetes client " + key + " " + client.client + ": " + cause);
                 }
-
-            }) //
+            } )
             .build();
 
     private KubernetesClientProvider() {
     }
 
-    static KubernetesClient createClient(KubernetesCloud cloud) throws NoSuchAlgorithmException, UnrecoverableKeyException,
-            KeyStoreException, IOException, CertificateEncodingException {
+    static KubernetesClient createClient(KubernetesCloud cloud) throws KubernetesAuthException, IOException {
         String displayName = cloud.getDisplayName();
         final Client c = clients.getIfPresent(displayName);
         if (c == null) {
             KubernetesClient client = new KubernetesFactoryAdapter(cloud.getServerUrl(), cloud.getNamespace(),
                     cloud.getServerCertificate(), cloud.getCredentialsId(), cloud.isSkipTlsVerify(),
-                    cloud.getConnectTimeout(), cloud.getReadTimeout(), cloud.getMaxRequestsPerHost()).createClient();
+                    cloud.getConnectTimeout(), cloud.getReadTimeout(), cloud.getMaxRequestsPerHost(), cloud.isUseJenkinsProxy()).createClient();
             clients.put(displayName, new Client(getValidity(cloud), client));
-            LOGGER.log(Level.INFO, "Created new Kubernetes client: {0} {1}", new Object[] { displayName, client });
+            LOGGER.log(Level.FINE, "Created new Kubernetes client: {0} {1}", new Object[] { displayName, client });
             return client;
         }
         return c.getClient();
     }
 
     private static int getValidity(KubernetesCloud cloud) {
-        return Objects.hashCode(cloud.getServerUrl(), cloud.getNamespace(), cloud.getServerCertificate(),
+        Object cloudObjects[] = { cloud.getServerUrl(), cloud.getNamespace(), cloud.getServerCertificate(),
                 cloud.getCredentialsId(), cloud.isSkipTlsVerify(), cloud.getConnectTimeout(), cloud.getReadTimeout(),
-                cloud.getMaxRequestsPerHostStr());
+                cloud.getMaxRequestsPerHostStr(), cloud.isUseJenkinsProxy() };
+        return Arrays.hashCode(cloudObjects);
     }
 
     private static class Client {
@@ -115,53 +92,20 @@ final class KubernetesClientProvider {
         }
     }
 
-    @Extension
-    public static class PurgeExpiredKubernetesClients extends AsyncPeriodicWork {
+    private static volatile int runningCallsCount;
+    private static volatile int queuedCallsCount;
 
-        public PurgeExpiredKubernetesClients() {
-            super("Purge expired KubernetesClients");
-        }
-
-        @Override
-        public long getRecurrencePeriod() {
-            return TimeUnit.MINUTES.toMillis(1);
-        }
-
-        @Override
-        protected Level getNormalLoggingLevel() {
-            return Level.FINEST;
-        }
-
-        @Override
-        protected void execute(TaskListener listener) {
-            for (Iterator<KubernetesClient> it = expiredClients.iterator(); it.hasNext();) {
-                KubernetesClient client = it.next();
-                if (client instanceof HttpClientAware) {
-                    if (gracefulClose(client, ((HttpClientAware) client).getHttpClient())) {
-                        it.remove();
-                    }
-                } else {
-                    LOGGER.log(Level.WARNING, "{0} is not {1}, forcing close", new Object[] {client.toString(), HttpClientAware.class.getSimpleName()});
-                    client.close();
-                    it.remove();
-                }
-            }
-        }
+    public static int getRunningCallsCount() {
+        return runningCallsCount;
     }
 
-    private static boolean gracefulClose(KubernetesClient client, OkHttpClient httpClient) {
-        Dispatcher dispatcher = httpClient.dispatcher();
-        // Remove the client if there are no more users
-        int runningCallsCount = dispatcher.runningCallsCount();
-        int queuedCallsCount = dispatcher.queuedCallsCount();
-        if (runningCallsCount == 0 && queuedCallsCount == 0) {
-            LOGGER.log(Level.INFO, "Closing {0}", client.toString());
-            client.close();
-            return true;
-        } else {
-            LOGGER.log(Level.INFO, "Not closing {0}: there are still running ({1}) or queued ({2}) calls", new Object[] {client.toString(), runningCallsCount, queuedCallsCount});
-            return false;
-        }
+    public static int getQueuedCallsCount() {
+        return queuedCallsCount;
+    }
+
+    @Restricted(NoExternalUse.class) // testing only
+    public static void invalidate(String displayName) {
+        clients.invalidate(displayName);
     }
 
     @Extension
@@ -174,20 +118,43 @@ final class KubernetesClientProvider {
                 for (KubernetesCloud cloud : jenkins.clouds.getAll(KubernetesCloud.class)) {
                     String displayName = cloud.getDisplayName();
                     Client client = clients.getIfPresent(displayName);
-                    if (client != null && client.getValidity() == getValidity(cloud)) {
+                    if (client == null || client.getValidity() == getValidity(cloud)) {
                         cloudDisplayNames.remove(displayName);
-                    } else {
-                        LOGGER.log(Level.INFO, "Invalidating Kubernetes client: {0} {1}",
-                                new Object[] { displayName, client });
                     }
                 }
                 // Remove missing / invalid clients
                 for (String displayName : cloudDisplayNames) {
-                    clients.invalidate(displayName);
+                    LOGGER.log(Level.INFO, () -> "Invalidating Kubernetes client: " + displayName + clients.getIfPresent(displayName));
+                    invalidate(displayName);
                 }
             }
             super.onChange(o, file);
         }
     }
 
+    @Extension
+    public static class UpdateConnectionCount extends PeriodicWork {
+
+        @Override
+        public long getRecurrencePeriod() {
+            return TimeUnit.SECONDS.toMillis(5);
+        }
+
+        @Override
+        protected void doRun() {
+            int runningCallsCount = 0;
+            int queuedCallsCount = 0;
+            for (Client client : KubernetesClientProvider.clients.asMap().values()) {
+                KubernetesClient kClient = client.getClient();
+                if (kClient instanceof HttpClientAware) {
+                    OkHttpClient httpClient = ((HttpClientAware) kClient).getHttpClient();
+                    Dispatcher dispatcher = httpClient.dispatcher();
+                    runningCallsCount += dispatcher.runningCallsCount();
+                    queuedCallsCount += dispatcher.queuedCallsCount();
+                }
+            }
+            KubernetesClientProvider.runningCallsCount = runningCallsCount;
+            KubernetesClientProvider.queuedCallsCount = queuedCallsCount;
+        }
+    }
 }

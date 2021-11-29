@@ -16,37 +16,40 @@
 
 package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 
-import static org.csanchez.jenkins.plugins.kubernetes.pipeline.Constants.*;
 
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
+import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
 import java.io.PrintStream;
 import java.io.Serializable;
+import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Matcher;
 
-import org.apache.commons.io.output.NullOutputStream;
+import hudson.AbortException;
+import io.fabric8.kubernetes.api.model.Container;
 import org.apache.commons.io.output.TeeOutputStream;
-import org.csanchez.jenkins.plugins.kubernetes.pipeline.proc.CachedProc;
-import org.csanchez.jenkins.plugins.kubernetes.pipeline.proc.DeadProc;
+import org.csanchez.jenkins.plugins.kubernetes.ContainerTemplate;
+import org.csanchez.jenkins.plugins.kubernetes.KubernetesSlave;
 import org.jenkinsci.plugins.workflow.steps.EnvironmentExpander;
 
-import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.EnvVars;
 import hudson.FilePath;
@@ -55,15 +58,14 @@ import hudson.LauncherDecorator;
 import hudson.Proc;
 import hudson.model.Computer;
 import hudson.model.Node;
-import io.fabric8.kubernetes.api.model.ContainerStatus;
-import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
-import io.fabric8.kubernetes.client.KubernetesClientTimeoutException;
 import io.fabric8.kubernetes.client.dsl.ExecListener;
 import io.fabric8.kubernetes.client.dsl.ExecWatch;
 import io.fabric8.kubernetes.client.dsl.Execable;
 import okhttp3.Response;
+
+import static org.csanchez.jenkins.plugins.kubernetes.pipeline.Constants.EXIT;
 
 /**
  * This decorator interacts directly with the Kubernetes exec API to run commands inside a container. It does not use
@@ -85,44 +87,38 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
     private static final String COOKIE_VAR = "JENKINS_SERVER_COOKIE";
 
     private static final Logger LOGGER = Logger.getLogger(ContainerExecDecorator.class.getName());
-    private static final String DEFAULT_SHELL="/bin/sh";
 
     /**
      * stdin buffer size for commands sent to Kubernetes exec api. A low value will cause slowness in commands executed.
      * A higher value will consume more memory
      */
-    private static final int STDIN_BUFFER_SIZE = Integer
-            .getInteger(ContainerExecDecorator.class.getName() + ".stdinBufferSize", 2 * 1024);
-
-    private transient KubernetesClient client;
-
+    private static final int STDIN_BUFFER_SIZE = Integer.getInteger(ContainerExecDecorator.class.getName() + ".stdinBufferSize", 16 * 1024);
+    /**
+     * time in milliseconds to wait for checking whether the process immediately returned
+     */
+    public static final int COMMAND_FINISHED_TIMEOUT_MS = 200;
 
     @SuppressFBWarnings(value = "SE_TRANSIENT_FIELD_NOT_RESTORED", justification = "not needed on deserialization")
     private transient List<Closeable> closables;
-    @SuppressFBWarnings(value = "SE_TRANSIENT_FIELD_NOT_RESTORED", justification = "not needed on deserialization")
-    private transient Map<Integer, ContainerExecProc> processes = new HashMap<Integer, ContainerExecProc>();
 
-    private String podName;
-    private String namespace;
     private String containerName;
     private EnvironmentExpander environmentExpander;
     private EnvVars globalVars;
+    /** @deprecated no longer used */
+    @Deprecated
     private FilePath ws;
     private EnvVars rcEnvVars;
     private String shell;
+    private KubernetesNodeContext nodeContext;
 
     public ContainerExecDecorator() {
     }
 
     @Deprecated
     public ContainerExecDecorator(KubernetesClient client, String podName, String containerName, String namespace, EnvironmentExpander environmentExpander, FilePath ws) {
-        this.client = client;
-        this.podName = podName;
-        this.namespace = namespace;
         this.containerName = containerName;
         this.environmentExpander = environmentExpander;
         this.ws = ws;
-        this.shell = DEFAULT_SHELL;
     }
 
     @Deprecated
@@ -150,28 +146,48 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
         this(client, podName, containerName, (String) null, null, null);
     }
 
+    @Deprecated
     public KubernetesClient getClient() {
-        return client;
+        try {
+            return nodeContext.connectToCloud();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
+    @Deprecated
     public void setClient(KubernetesClient client) {
-        this.client = client;
+        // NOOP
     }
 
+    @Deprecated
+    // TODO make private
     public String getPodName() {
-        return podName;
+        try {
+            return getNodeContext().getPodName();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
+    @Deprecated
     public void setPodName(String podName) {
-        this.podName = podName;
+        // NOOP
     }
 
+    @Deprecated
+    // TODO make private
     public String getNamespace() {
-        return namespace;
+        try {
+            return getNodeContext().getNamespace();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
+    @Deprecated
     public void setNamespace(String namespace) {
-        this.namespace = namespace;
+        // NOOP
     }
 
     public String getContainerName() {
@@ -206,6 +222,8 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
         return this.rcEnvVars;
     }
 
+    /** @deprecated unused */
+    @Deprecated
     public FilePath getWs() {
         return ws;
     }
@@ -214,12 +232,16 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
         this.ws = ws;
     }
 
-    public String getShell() {
-        return shell == null? DEFAULT_SHELL:shell;
-    }
-
     public void setShell(String shell) {
         this.shell = shell;
+    }
+
+    public KubernetesNodeContext getNodeContext() {
+        return nodeContext;
+    }
+
+    public void setNodeContext(KubernetesNodeContext nodeContext) {
+        this.nodeContext = nodeContext;
     }
 
     @Override
@@ -228,68 +250,127 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
             @Override
             public Proc launch(ProcStarter starter) throws IOException {
                 LOGGER.log(Level.FINEST, "Launch proc with environment: {0}", Arrays.toString(starter.envs()));
+
+                // find container working dir
+                KubernetesSlave slave = (KubernetesSlave) node;
+                FilePath containerWorkingDirFilePath = starter.pwd();
+                String containerWorkingDirFilePathStr = containerWorkingDirFilePath != null
+                        ? containerWorkingDirFilePath.getRemote() : ContainerTemplate.DEFAULT_WORKING_DIR;
+                String containerWorkingDirStr = ContainerTemplate.DEFAULT_WORKING_DIR;
+                if (slave != null && slave.getPod().isPresent() && containerName != null) {
+                    Optional<Container> container = slave.getPod().get().getSpec().getContainers().stream()
+                            .filter(container1 -> container1.getName().equals(containerName))
+                            .findAny();
+                    Optional<String> containerWorkingDir = Optional.empty();
+                    if (container.isPresent() && container.get().getWorkingDir() != null) {
+                        containerWorkingDir = Optional.of(container.get().getWorkingDir());
+                    }
+                    if (containerWorkingDir.isPresent()) {
+                        containerWorkingDirStr = containerWorkingDir.get();
+                    }
+
+                    if (containerWorkingDir.isPresent() &&
+                            containerWorkingDirFilePath != null &&
+                            ! containerWorkingDirFilePath.getRemote().startsWith(containerWorkingDirStr)) {
+                        // Container has a custom workingDir, updated the pwd to match container working dir
+                        containerWorkingDirFilePathStr = containerWorkingDirFilePath.getRemote().replaceFirst(
+                                ContainerTemplate.DEFAULT_WORKING_DIR, containerWorkingDirStr);
+                        containerWorkingDirFilePath = new FilePath(containerWorkingDirFilePath.getChannel(), containerWorkingDirFilePathStr);
+                        LOGGER.log(Level.FINEST, "Modified the pwd to match {0} containers workspace directory : {1}",
+                                new String[]{containerName, containerWorkingDirFilePathStr});
+                    }
+                }
+
                 String[] envVars = starter.envs();
+                // modify the working dir on envvars part of starter env vars
+                if (!containerWorkingDirStr.equals(ContainerTemplate.DEFAULT_WORKING_DIR)) {
+                    for (int i = 0; i < envVars.length; i++) {
+                        String keyValue = envVars[i];
+                        String[] split = keyValue.split("=", 2);
+                        if (split[1].startsWith(ContainerTemplate.DEFAULT_WORKING_DIR)) {
+                            // Container has a custom workingDir, update env vars with right workspace folder
+                            split[1] = split[1].replaceFirst(ContainerTemplate.DEFAULT_WORKING_DIR, containerWorkingDirStr);
+                            envVars[i] = split[0] + "=" + split[1];
+                            LOGGER.log(Level.FINEST, "Updated the starter environment variable, key: {0}, Value: {1}",
+                                    new String[]{split[0], split[1]});
+                        }
+                    }
+                }
+
                 if (node != null) { // It seems this is possible despite the method javadoc saying it is non-null
                     final Computer computer = node.toComputer();
                     if (computer != null) {
                         List<String> resultEnvVar = new ArrayList<>();
                         try {
                             EnvVars environment = computer.getEnvironment();
-                            String[] envs = starter.envs();
-                            for (String keyValue : envs) {
-                                String[] split = keyValue.split("=", 2);
-                                if (!split[1].equals(environment.get(split[0]))) {
-                                    // Only keep environment variables that differ from Computer's environment
-                                    resultEnvVar.add(keyValue);
+                            if (environment != null) {
+                                Set<String> overriddenKeys = new HashSet<>();
+                                for (String keyValue : envVars) {
+                                    String[] split = keyValue.split("=", 2);
+                                    if (!split[1].equals(environment.get(split[0]))) {
+                                        // Only keep environment variables that differ from Computer's environment
+                                        resultEnvVar.add(keyValue);
+                                        overriddenKeys.add(split[0]);
+                                    }
                                 }
+
+                                // modify the working dir on envvars part of Computer
+                                if (!containerWorkingDirStr.equals(ContainerTemplate.DEFAULT_WORKING_DIR)) {
+                                    for (Map.Entry<String, String> entry : environment.entrySet()) {
+                                        if (entry.getValue().startsWith(ContainerTemplate.DEFAULT_WORKING_DIR)
+                                                && !overriddenKeys.contains(entry.getKey())) {
+                                            // Value should be overridden and is not overridden earlier
+                                            String newValue = entry.getValue().replaceFirst(ContainerTemplate.DEFAULT_WORKING_DIR, containerWorkingDirStr);
+                                            String keyValue = entry.getKey() + "=" + newValue;
+                                            LOGGER.log(Level.FINEST, "Updated the value for envVar, key: {0}, Value: {1}",
+                                                    new String[]{entry.getKey(), newValue});
+                                            resultEnvVar.add(keyValue);
+                                        }
+                                    }
+                                }
+                                envVars = resultEnvVar.toArray(new String[resultEnvVar.size()]);
                             }
-                            envVars = resultEnvVar.toArray(new String[resultEnvVar.size()]);
                         } catch (InterruptedException e) {
                             throw new IOException("Unable to retrieve environment variables", e);
                         }
                     }
                 }
-                return doLaunch(starter.quiet(), envVars, starter.stdout(), starter.pwd(), starter.masks(),
-                        getCommands(starter));
+                return doLaunch(starter.quiet(), fixDoubleDollar(envVars), starter.stdout(), containerWorkingDirFilePath, starter.masks(),
+                        getCommands(starter, containerWorkingDirFilePathStr, launcher.isUnix()));
             }
 
             private Proc doLaunch(boolean quiet, String[] cmdEnvs, OutputStream outputForCaller, FilePath pwd,
                     boolean[] masks, String... commands) throws IOException {
-                if (processes == null) {
-                    processes = new HashMap<>();
-                }
-                //check ifits the actual script or the ProcessLiveness check.
-                int p = readPidFromPsCommand(commands);
-                //if it is a liveness check, try to find the actual process to avoid doing multiple execs.
-                if (p == 9999) {
-                    return new DeadProc();
-                } else if (p > 0 && processes.containsKey(p)) {
-                    LOGGER.log(Level.INFO, "Retrieved process from cache with pid:[ " + p + "].");
-                    return new CachedProc(processes.get(p));
-                }
-
-                waitUntilPodContainersAreReady();
-
                 final CountDownLatch started = new CountDownLatch(1);
                 final CountDownLatch finished = new CountDownLatch(1);
                 final AtomicBoolean alive = new AtomicBoolean(false);
+                final AtomicLong startAlive = new AtomicLong();
+                long startMethod = System.nanoTime();
 
+                PrintStream printStream;
+                OutputStream stream;
 
-                PrintStream printStream = launcher.getListener().getLogger();
-                OutputStream stream = printStream;
+                // Only output to stdout at the beginning for diagnostics.
+                ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+                ToggleOutputStream toggleStdout = new ToggleOutputStream(stdout);
+
                 // Do not send this command to the output when in quiet mode
                 if (quiet) {
-                    stream = new NullOutputStream();
-                    printStream = new PrintStream(stream, false, StandardCharsets.UTF_8.toString());
+                    stream = toggleStdout;
+                    printStream = new PrintStream(stream, true, StandardCharsets.UTF_8.toString());
+                } else {
+                    printStream = launcher.getListener().getLogger();
+                    stream = new TeeOutputStream(toggleStdout, printStream);
                 }
 
                 // Send to proc caller as well if they sent one
-                if (outputForCaller != null && !outputForCaller.equals(stream)) {
+                if (outputForCaller != null && !outputForCaller.equals(printStream)) {
                     stream = new TeeOutputStream(outputForCaller, stream);
                 }
                 ByteArrayOutputStream error = new ByteArrayOutputStream();
 
-                String msg = "Executing shell script inside container [" + containerName + "] of pod [" + podName + "]";
+                String sh = shell != null ? shell : launcher.isUnix() ? "sh" : "cmd";
+                String msg = "Executing " + sh + " script inside container " + containerName + " of pod " + getPodName();
                 LOGGER.log(Level.FINEST, msg);
                 printStream.println(msg);
 
@@ -297,7 +378,7 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
                     closables = new ArrayList<>();
                 }
 
-                Execable<String, ExecWatch> execable = client.pods().inNamespace(namespace).withName(podName).inContainer(containerName) //
+                Execable<String, ExecWatch> execable = getClient().pods().inNamespace(getNamespace()).withName(getPodName()).inContainer(containerName) //
                         .redirectingInput(STDIN_BUFFER_SIZE) // JENKINS-50429
                         .writingOutput(stream).writingError(stream).writingErrorChannel(error)
                         .usingListener(new ExecListener() {
@@ -305,6 +386,7 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
                             public void onOpen(Response response) {
                                 alive.set(true);
                                 started.countDown();
+                                startAlive.set(System.nanoTime());
                                 LOGGER.log(Level.FINEST, "onOpen : {0}", finished);
                             }
 
@@ -325,7 +407,7 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
                             public void onClose(int i, String s) {
                                 alive.set(false);
                                 started.countDown();
-                                LOGGER.log(Level.FINEST, "onClose : {0}", finished);
+                                LOGGER.log(Level.FINEST, "onClose : {0} [{1} ms]", new Object[]{finished, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startAlive.get())});
                                 if (finished.getCount() == 0) {
                                     LOGGER.log(Level.WARNING,
                                             "onClose called but latch already finished. This indicates a bug in the kubernetes-plugin");
@@ -336,7 +418,7 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
 
                 ExecWatch watch;
                 try {
-                    watch = execable.exec(getShell());
+                    watch = execable.exec(sh);
                 } catch (KubernetesClientException e) {
                     if (e.getCause() instanceof InterruptedException) {
                         throw new IOException(
@@ -370,11 +452,20 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
                 }
 
                 try {
+                    // Depends on the ping time with the Kubernetes API server
+                    // Not fully satisfied with this solution because it can delay the execution
+                    if (finished.await(COMMAND_FINISHED_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                        launcher.getListener().error("Process exited immediately after creation. See output below%n%s", stdout.toString(StandardCharsets.UTF_8.name()));
+                        throw new AbortException("Process exited immediately after creation. Check logs above for more details.");
+                    }
+                    toggleStdout.disable();
                     OutputStream stdin = watch.getInput();
+                    PrintStream in = new PrintStream(stdin, true, StandardCharsets.UTF_8.name());
                     if (pwd != null) {
                         // We need to get into the project workspace.
                         // The workspace is not known in advance, so we have to execute a cd command.
-                        stdin.write(String.format("cd \"%s\"%s", pwd, NEWLINE).getBytes(StandardCharsets.UTF_8));
+                        in.print(String.format("cd \"%s\"", pwd));
+                        in.print(newLine(!launcher.isUnix()));
                     }
 
                     EnvVars envVars = new EnvVars();
@@ -401,14 +492,13 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
 
                     LOGGER.log(Level.FINEST, "Launching with env vars: {0}", envVars.toString());
 
-                    this.setupEnvironmentVariable(envVars, stdin);
+                    setupEnvironmentVariable(envVars, in, !launcher.isUnix());
 
-                    doExec(stdin, printStream, masks, commands);
+                    doExec(in, !launcher.isUnix(), printStream, masks, commands);
 
-                    int pid = readPidFromPidFile(commands);
-                    LOGGER.log(Level.INFO, "Created process inside pod: ["+podName+"], container: ["+containerName+"] with pid:["+pid+"]");
+                    LOGGER.log(Level.INFO, "Created process inside pod: [" + getPodName() + "], container: ["
+                            + containerName + "]" + "[" + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startMethod) + " ms]");
                     ContainerExecProc proc = new ContainerExecProc(watch, alive, finished, stdin, error);
-                    processes.put(pid, proc);
                     closables.add(proc);
                     return proc;
                 } catch (InterruptedException ie) {
@@ -427,60 +517,33 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
 
                 int exitCode = doLaunch(
                         true, null, null, null, null,
+                        // TODO Windows
                         "sh", "-c", "kill \\`grep -l '" + COOKIE_VAR + "=" + cookie  +"' /proc/*/environ | cut -d / -f 3 \\`"
                 ).join();
 
                 getListener().getLogger().println("kill finished with exit code " + exitCode);
             }
 
-            private void setupEnvironmentVariable(EnvVars vars, OutputStream out) throws IOException {
+            private void setupEnvironmentVariable(EnvVars vars, PrintStream out, boolean windows) throws IOException {
                 for (Map.Entry<String, String> entry : vars.entrySet()) {
                     //Check that key is bash compliant.
                     if (entry.getKey().matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-                            out.write(
+                            out.print(
                                     String.format(
-                                            "export %s='%s'%s",
+                                            windows ? "set %s=%s" : "export %s='%s'",
                                             entry.getKey(),
-                                            entry.getValue().replace("'", "'\\''"),
-                                            NEWLINE
-                                    ).getBytes(StandardCharsets.UTF_8)
+                                            windows ? entry.getValue() : entry.getValue().replace("'", "'\\''")
+                                    )
                             );
+                            out.print(newLine(windows));
                         }
                     }
-            }
-
-            private void waitUntilPodContainersAreReady() throws IOException {
-                LOGGER.log(Level.FINEST, "Waiting until pod containers are ready: {0}/{1}",
-                        new String[] { namespace, podName });
-                try {
-                    Pod pod = client.pods().inNamespace(namespace).withName(podName)
-                            .waitUntilReady(CONTAINER_READY_TIMEOUT, TimeUnit.MINUTES);
-                    LOGGER.log(Level.FINEST, "Pod is ready: {0}/{1}", new String[] { namespace, podName });
-
-                    if (pod == null || pod.getStatus() == null || pod.getStatus().getContainerStatuses() == null) {
-                        throw new IOException("Failed to execute shell script inside container " +
-                                "[" + containerName + "] of pod [" + podName + "]." +
-                                "Failed to get container status");
-                    }
-
-                    for (ContainerStatus info : pod.getStatus().getContainerStatuses()) {
-                        if (info.getName().equals(containerName)) {
-                            if (info.getReady()) {
-                                return;
-                            } else {
-                                // container died in the meantime
-                                throw new IOException("container [" + containerName + "] of pod [" + podName + "] is not ready, state is " + info.getState());
-                            }
-                        }
-                    }
-                    throw new IOException("container [" + containerName + "] does not exist in pod [" + podName + "]");
-                } catch (InterruptedException | KubernetesClientTimeoutException e) {
-                    throw new IOException("Failed to execute shell script inside container " +
-                            "[" + containerName + "] of pod [" + podName + "]." +
-                            " Timed out waiting for container to become ready!", e);
-                }
             }
         };
+    }
+
+    private static String newLine(boolean windows) {
+        return windows ? "\r\n" : "\n";
     }
 
     @Override
@@ -491,96 +554,130 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
             try {
                 closable.close();
             } catch (Exception e) {
-                LOGGER.log(Level.FINE, "failed to close {0}");
+                LOGGER.log(Level.FINE, "failed to close", e);
             }
         }
     }
 
-    private static void doExec(OutputStream stdin, PrintStream out, boolean[] masks, String... statements) {
-        try {
-            out.print("Executing command: ");
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < statements.length; i++) {
-                String s = String.format("\"%s\" ", statements[i]);
-                if (masks != null && masks[i]) {
-                    sb.append("******** ");
-                    out.print("******** ");
-                } else {
-                    sb.append(s);
-                    out.print(s);
+    private static class ToggleOutputStream extends FilterOutputStream {
+        private boolean disabled;
+        public ToggleOutputStream(OutputStream out) {
+            super(out);
+        }
+
+        public void disable() {
+            disabled = true;
+        }
+
+        public void enable() {
+            disabled = false;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            if (!disabled) {
+                out.write(b);
+            }
+        }
+    }
+
+    /**
+     * Process given stream and mask as specified by the bitfield.
+     * Uses space as a separator to determine which fragments to hide.
+     */
+    private static class MaskOutputStream extends FilterOutputStream {
+        private static final String MASK_STRING = "********";
+
+        private final boolean[] masks;
+        private final static char SEPARATOR = ' ';
+        private int index;
+        private boolean wrote;
+
+
+        public MaskOutputStream(OutputStream out, boolean[] masks) {
+            super(out);
+            this.masks = masks;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            if (masks == null || index >= masks.length) {
+                out.write(b);
+            } else if (isSeparator(b)) {
+                out.write(b);
+                index++;
+                wrote = false;
+            } else if (masks[index]) {
+                if (!wrote) {
+                    wrote = true;
+                    for (char c : MASK_STRING.toCharArray()) {
+                        out.write(c);
+                    }
                 }
-                stdin.write(s.getBytes(StandardCharsets.UTF_8));
+            } else {
+                out.write(b);
             }
-            sb.append(NEWLINE);
-            out.println();
-            stdin.write(NEWLINE.getBytes(StandardCharsets.UTF_8));
+        }
 
-            // get the command exit code and print it padded so it is easier to parse in ContainerExecProc
+        private boolean isSeparator(int b) {
+            return b == SEPARATOR;
+        }
+    }
+
+    private static void doExec(PrintStream in, boolean windows, PrintStream out, boolean[] masks, String... statements) {
+        long start = System.nanoTime();
+        // For logging
+        ByteArrayOutputStream loggingOutput = new ByteArrayOutputStream();
+        // Tee both outputs
+        TeeOutputStream teeOutput = new TeeOutputStream(out, loggingOutput);
+        // Mask sensitive output
+        MaskOutputStream maskedOutput = new MaskOutputStream(teeOutput, masks);
+        // Tee everything together
+        PrintStream tee = null;
+        try {
+            String encoding = StandardCharsets.UTF_8.name();
+            tee = new PrintStream(new TeeOutputStream(in, maskedOutput), false, encoding);
+            // To output things that shouldn't be considered for masking
+            PrintStream unmasked = new PrintStream(teeOutput, false, encoding);
+            unmasked.print("Executing command: ");
+            for (String statement : statements) {
+                tee.append("\"")
+                        .append(statement)
+                        .append("\" ");
+            }
+            tee.print(newLine(windows));
+            LOGGER.log(Level.FINEST, loggingOutput.toString(encoding) + "[" + TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - start) + " μs." + "]");
             // We need to exit so that we know when the command has finished.
-            sb.append(EXIT + NEWLINE);
-            out.print(EXIT + NEWLINE);
-            LOGGER.log(Level.FINEST, "Executing command: {0}", sb);
-            stdin.write((EXIT + NEWLINE).getBytes(StandardCharsets.UTF_8));
-
-            out.flush();
-            stdin.flush();
-        } catch (IOException e) {
-            e.printStackTrace(out);
-            throw new RuntimeException(e);
+            tee.print(EXIT);
+            tee.print(newLine(windows));
+            tee.flush();
+        } catch (UnsupportedEncodingException e) {
+            e.printStackTrace();
         }
     }
 
-    static int readPidFromPsCommand(String... commands) {
-        if (commands.length == 4 && "ps".equals(commands[0]) && "-o".equals(commands[1]) && commands[2].equals("pid=")) {
-            return Integer.parseInt(commands[3]);
-        }
-
-
-        if (commands.length == 4 && "ps".equals(commands[0]) && "-o".equals(commands[1]) && commands[2].startsWith("-pid")) {
-            return Integer.parseInt(commands[3]);
-        }
-        return -1;
-    }
-
-
-    private synchronized int readPidFromPidFile(String... commands) throws IOException, InterruptedException {
-        int pid = -1;
-        String pidFilePath = readPidFile(commands);
-        if (pidFilePath == null) {
-            return pid;
-        }
-        FilePath pidFile = ws.child(pidFilePath);
-        for (int w = 0; w < 10 && !pidFile.exists(); w++) {
-            try {
-                wait(1000);
-            } catch (InterruptedException e) {
-                break;
-            }
-        }
-        if (pidFile.exists()) {
-            try {
-                pid = Integer.parseInt(pidFile.readToString().trim());
-            } catch (NumberFormatException x) {
-                throw new IOException("corrupted content in " + pidFile + ": " + x, x);
-            }
-        }
-        return pid;
-    }
-
-    @CheckForNull
-    static String readPidFile(String... commands) {
-        if (commands.length >= 4 && "nohup".equals(commands[0]) && "sh".equals(commands[1]) && commands[2].equals("-c") && commands[3].startsWith("echo \\$\\$ >")) {
-            return commands[3].substring(13, commands[3].indexOf(";") - 1);
-        }
-        return null;
-    }
-
-    static String[] getCommands(Launcher.ProcStarter starter) {
+    static String[] getCommands(Launcher.ProcStarter starter, String containerWorkingDirStr, boolean unix) {
         List<String> allCommands = new ArrayList<String>();
 
-        // BourneShellScript.launchWithCookie escapes $ as $$, we convert it to \$
+
         for (String cmd : starter.cmds()) {
-            allCommands.add(cmd.replaceAll("\\$\\$", "\\\\\\$"));
+            // BourneShellScript.launchWithCookie escapes $ as $$, we convert it to \$
+            String fixedCommand = cmd.replaceAll("\\$\\$", Matcher.quoteReplacement("\\$"));
+            if (unix) {
+                fixedCommand = fixedCommand.replaceAll("\\\"", Matcher.quoteReplacement("\\\""));
+            }
+
+            String oldRemoteDir = null;
+            FilePath oldRemoteDirFilepath = starter.pwd();
+            if (oldRemoteDirFilepath != null) {
+                oldRemoteDir = oldRemoteDirFilepath.getRemote();
+            }
+            if (oldRemoteDir != null && ! oldRemoteDir.isEmpty() &&
+                    !oldRemoteDir.equals(containerWorkingDirStr) && fixedCommand.contains(oldRemoteDir)) {
+                // Container has a custom workingDir, update the dir in commands
+                fixedCommand = fixedCommand.replaceAll(oldRemoteDir, containerWorkingDirStr);
+            }
+            allCommands.add(fixedCommand);
         }
         return allCommands.toArray(new String[allCommands.size()]);
     }
@@ -602,7 +699,14 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
         }
     }
 
+    @Deprecated
     public void setKubernetesClient(KubernetesClient client) {
-        this.client = client;
+        // NOOP
+    }
+
+    private static String[] fixDoubleDollar(String[] envVars) {
+        return Arrays.stream(envVars)
+                .map(ev -> ev.replaceAll("\\$\\$", Matcher.quoteReplacement("$")))
+                .toArray(String[]::new);
     }
 }

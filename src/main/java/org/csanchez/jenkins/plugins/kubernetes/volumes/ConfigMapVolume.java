@@ -28,20 +28,26 @@ import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
 
 import hudson.Extension;
+import hudson.Util;
 import hudson.model.Descriptor;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
+import org.kohsuke.stapler.DataBoundSetter;
+
 
 public class ConfigMapVolume extends PodVolume {
-
     private String mountPath;
+    private String subPath;
     private String configMapName;
+    private Boolean optional;
 
     @DataBoundConstructor
-    public ConfigMapVolume(String mountPath, String configMapName) {
+    public ConfigMapVolume(String mountPath, String configMapName, Boolean optional) {
         this.mountPath = mountPath;
         this.configMapName = configMapName;
+        this.optional = optional;
     }
+
 
     @Override
     public Volume buildVolume(String volumeName) {
@@ -49,6 +55,7 @@ public class ConfigMapVolume extends PodVolume {
                 .withName(volumeName)
                 .withNewConfigMap()
                     .withName(getConfigMapName())
+                    .withOptional(getOptional())
                 .and()
                 .build();
     }
@@ -62,6 +69,24 @@ public class ConfigMapVolume extends PodVolume {
         return mountPath;
     }
 
+    public Boolean getOptional() {
+        return optional;
+    }
+    
+    public String getSubPath() {
+        return subPath;
+    }
+    
+    @DataBoundSetter
+    public void setSubPath(String subPath) {
+        this.subPath = Util.fixEmpty(subPath);
+    }
+
+    protected Object readResolve() {
+        this.subPath = Util.fixEmpty(subPath);
+        return this;
+    }
+    
     @Extension
     @Symbol("configMapVolume")
     public static class DescriptorImpl extends Descriptor<PodVolume> {

@@ -26,25 +26,28 @@ package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 
 import static java.util.Arrays.*;
 import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.*;
+import static org.junit.Assert.assertTrue;
 
-import java.net.InetAddress;
-import java.net.URL;
+import java.io.IOException;
 import java.util.Collections;
+import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.apache.commons.compress.utils.IOUtils;
-import org.apache.commons.lang.StringUtils;
 import org.csanchez.jenkins.plugins.kubernetes.ContainerEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.ContainerTemplate;
 import org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud;
+import org.csanchez.jenkins.plugins.kubernetes.KubernetesSlave;
 import org.csanchez.jenkins.plugins.kubernetes.PodTemplate;
 import org.csanchez.jenkins.plugins.kubernetes.model.KeyValueEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.model.SecretEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.model.TemplateEnvVar;
-import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
 import org.jenkinsci.plugins.workflow.job.WorkflowRun;
+import org.jenkinsci.plugins.workflow.support.steps.ExecutorStepExecution;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Rule;
@@ -52,15 +55,17 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
 import org.jvnet.hudson.test.BuildWatcher;
+import org.jvnet.hudson.test.Issue;
+import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.LoggerRule;
 import org.jvnet.hudson.test.RestartableJenkinsNonLocalhostRule;
 
 import hudson.model.Node;
+import hudson.model.Result;
 import hudson.slaves.DumbSlave;
 import hudson.slaves.JNLPLauncher;
 import hudson.slaves.NodeProperty;
 import hudson.slaves.RetentionStrategy;
-import jenkins.model.JenkinsLocationConfiguration;
 
 public class RestartPipelineTest {
     protected static final String CONTAINER_ENV_VAR_VALUE = "container-env-var-value";
@@ -92,14 +97,14 @@ public class RestartPipelineTest {
     }
 
     private static void setEnvVariables(PodTemplate podTemplate) {
-        TemplateEnvVar podSecretEnvVar = new SecretEnvVar("POD_ENV_VAR_FROM_SECRET", "pod-secret", SECRET_KEY);
+        TemplateEnvVar podSecretEnvVar = new SecretEnvVar("POD_ENV_VAR_FROM_SECRET", "pod-secret", SECRET_KEY, false);
         TemplateEnvVar podSimpleEnvVar = new KeyValueEnvVar("POD_ENV_VAR", POD_ENV_VAR_VALUE);
         podTemplate.setEnvVars(asList(podSecretEnvVar, podSimpleEnvVar));
         TemplateEnvVar containerEnvVariable = new KeyValueEnvVar("CONTAINER_ENV_VAR", CONTAINER_ENV_VAR_VALUE);
         TemplateEnvVar containerEnvVariableLegacy = new ContainerEnvVar("CONTAINER_ENV_VAR_LEGACY",
                 CONTAINER_ENV_VAR_VALUE);
         TemplateEnvVar containerSecretEnvVariable = new SecretEnvVar("CONTAINER_ENV_VAR_FROM_SECRET",
-                "container-secret", SECRET_KEY);
+                                                                     "container-secret", SECRET_KEY, false);
         podTemplate.getContainers().get(0)
                 .setEnvVars(asList(containerEnvVariable, containerEnvVariableLegacy, containerSecretEnvVariable));
     }
@@ -108,6 +113,7 @@ public class RestartPipelineTest {
         // Create a busybox template
         PodTemplate podTemplate = new PodTemplate();
         podTemplate.setLabel(label);
+        podTemplate.setTerminationGracePeriodSeconds(0L);
 
         ContainerTemplate containerTemplate = new ContainerTemplate("busybox", "busybox", "cat", "");
         containerTemplate.setTtyEnabled(true);
@@ -122,19 +128,15 @@ public class RestartPipelineTest {
         cloud.getTemplates().clear();
         cloud.addTemplate(buildBusyboxTemplate("busybox"));
 
-        // Agents running in Kubernetes (minikube) need to connect to this server, so localhost does not work
-        URL url = story.j.getURL();
-
-        String hostAddress = System.getProperty("jenkins.host.address");
-        if (StringUtils.isBlank(hostAddress)) {
-            hostAddress = InetAddress.getLocalHost().getHostAddress();
-        }
-        System.err.println("Calling home to address: " + hostAddress);
-        URL nonLocalhostUrl = new URL(url.getProtocol(), hostAddress, url.getPort(),
-                url.getFile());
-        JenkinsLocationConfiguration.get().setUrl(nonLocalhostUrl.toString());
+        setupHost();
 
         story.j.jenkins.clouds.add(cloud);
+    }
+    
+    public void configureAgentListener() throws IOException {
+      //Take random port and fix it, to be the same after Jenkins restart
+      int fixedPort = story.j.jenkins.getTcpSlaveAgentListener().getAdvertisedPort();
+      story.j.jenkins.setSlaveAgentPort(fixedPort);
     }
 
     protected String loadPipelineScript(String name) {
@@ -146,67 +148,195 @@ public class RestartPipelineTest {
     }
 
     @Test
-    public void runInPodWithRestartWithMultipleContainerCalls() throws Exception {
+    public void nullLabelSupportsRestart() {
+        AtomicReference<String> projectName = new AtomicReference<>();
         story.then(r -> {
+            configureAgentListener();
             configureCloud();
-            r.jenkins.addNode(new DumbSlave("slave", "dummy", tmp.newFolder("remoteFS").getPath(), "1",
-                    Node.Mode.NORMAL, "", new JNLPLauncher(), RetentionStrategy.NOOP,
-                    Collections.<NodeProperty<?>>emptyList())); // TODO JENKINS-26398 clumsy
-            WorkflowJob p = r.jenkins.createProject(WorkflowJob.class, "p");
-            p.setDefinition(new CpsFlowDefinition(loadPipelineScript("runInPodWithRestartWithMultipleContainerCalls.groovy")
-                    , true));
-            WorkflowRun b = p.scheduleBuild2(0).waitForStart();
-            // we need to wait until we are sure that the sh
-            // step has started...
+            PodTemplate pt = new PodTemplate();
+            pt.setName("test");
+            pt.setNodeUsageMode(Node.Mode.NORMAL);
+            ContainerTemplate ct = new ContainerTemplate("busybox", "busybox");
+            ct.setTtyEnabled(true);
+            ct.setCommand("/bin/cat");
+            pt.setContainers(Collections.singletonList(ct));
+            cloud.setTemplates(Collections.singletonList(pt));
+            r.jenkins.setNumExecutors(0);
+            WorkflowRun b = getPipelineJobThenScheduleRun(r);
+            projectName.set(b.getParent().getFullName());
             r.waitForMessage("+ sleep 5", b);
         });
         story.then(r -> {
-            WorkflowRun b = r.jenkins.getItemByFullName("p", WorkflowJob.class).getBuildByNumber(1);
+            WorkflowRun b = r.jenkins.getItemByFullName(projectName.get(), WorkflowJob.class).getBuildByNumber(1);
+            r.waitForMessage("Ready to run", b);
             r.assertLogContains("finished the test!", r.assertBuildStatusSuccess(r.waitForCompletion(b)));
         });
     }
 
     @Test
-    public void runInPodWithRestart() throws Exception {
+    public void runInPodWithRestartWithMultipleContainerCalls() throws Exception {
+        AtomicReference<String> projectName = new AtomicReference<>();
         story.then(r -> {
+            configureAgentListener();
             configureCloud();
             r.jenkins.addNode(new DumbSlave("slave", "dummy", tmp.newFolder("remoteFS").getPath(), "1",
                     Node.Mode.NORMAL, "", new JNLPLauncher(), RetentionStrategy.NOOP,
                     Collections.<NodeProperty<?>>emptyList())); // TODO JENKINS-26398 clumsy
-            WorkflowJob p = r.jenkins.createProject(WorkflowJob.class, "p");
-            p.setDefinition(new CpsFlowDefinition(loadPipelineScript("runInPodWithRestartWithLongSleep.groovy")
-                    , true));
-            WorkflowRun b = p.scheduleBuild2(0).waitForStart();
+            WorkflowRun b = getPipelineJobThenScheduleRun(r);
+            projectName.set(b.getParent().getFullName());
             // we need to wait until we are sure that the sh
             // step has started...
             r.waitForMessage("+ sleep 5", b);
         });
         story.then(r -> {
-            WorkflowRun b = r.jenkins.getItemByFullName("p", WorkflowJob.class).getBuildByNumber(1);
+            WorkflowRun b = r.jenkins.getItemByFullName(projectName.get(), WorkflowJob.class).getBuildByNumber(1);
             r.assertLogContains("finished the test!", r.assertBuildStatusSuccess(r.waitForCompletion(b)));
         });
+    }
+
+    @Test
+    public void runInPodWithRestartWithLongSleep() throws Exception {
+        AtomicReference<String> projectName = new AtomicReference<>();
+        story.then(r -> {
+            configureAgentListener();
+            configureCloud();
+            r.jenkins.addNode(new DumbSlave("slave", "dummy", tmp.newFolder("remoteFS").getPath(), "1",
+                    Node.Mode.NORMAL, "", new JNLPLauncher(), RetentionStrategy.NOOP,
+                    Collections.<NodeProperty<?>>emptyList())); // TODO JENKINS-26398 clumsy
+            WorkflowRun b = getPipelineJobThenScheduleRun(r);
+            projectName.set(b.getParent().getFullName());
+            // we need to wait until we are sure that the sh
+            // step has started...
+            r.waitForMessage("+ sleep 5", b);
+        });
+        story.then(r -> {
+            WorkflowRun b = r.jenkins.getItemByFullName(projectName.get(), WorkflowJob.class).getBuildByNumber(1);
+            r.assertLogContains("finished the test!", r.assertBuildStatusSuccess(r.waitForCompletion(b)));
+        });
+    }
+
+    @Test
+    public void windowsRestart() throws Exception {
+        assumeWindows();
+        AtomicReference<String> projectName = new AtomicReference<>();
+        story.then(r -> {
+            configureAgentListener();
+            configureCloud();
+            cloud.setDirectConnection(false);
+            WorkflowRun b = getPipelineJobThenScheduleRun(r);
+            projectName.set(b.getParent().getFullName());
+            r.waitForMessage("sleeping #0", b);
+        });
+        story.then(r -> {
+            WorkflowRun b = r.jenkins.getItemByFullName(projectName.get(), WorkflowJob.class).getBuildByNumber(1);
+            r.assertLogContains("sleeping #9", r.assertBuildStatusSuccess(r.waitForCompletion(b)));
+            r.assertLogContains("finished the test!", r.assertBuildStatusSuccess(r.waitForCompletion(b)));
+        });
+    }
+
+    @Issue("JENKINS-49707")
+    @Test
+    public void terminatedPodAfterRestart() throws Exception {
+        AtomicReference<String> projectName = new AtomicReference<>();
+        story.then(r -> {
+            configureAgentListener();
+            configureCloud();
+            WorkflowRun b = getPipelineJobThenScheduleRun(r);
+            projectName.set(b.getParent().getFullName());
+            r.waitForMessage("+ sleep", b);
+        });
+        story.then(r -> {
+            WorkflowRun b = r.jenkins.getItemByFullName(projectName.get(), WorkflowJob.class).getBuildByNumber(1);
+            r.waitForMessage("Ready to run", b);
+            // Note that the test is cheating here slightly.
+            // The watch in Reaper is still running across the in-JVM restarts,
+            // whereas in production it would have been cancelled during the shutdown.
+            // But it does not matter since we are waiting for the agent to come back online after the restart,
+            // which is sufficient trigger to reactivate the reaper.
+            // Indeed we get two Reaper instances running, which independently remove the node.
+            deletePods(cloud.connect(), getLabels(this, name), false);
+            r.assertBuildStatus(Result.ABORTED, r.waitForCompletion(b));
+            r.waitForMessage(new ExecutorStepExecution.RemovedNodeCause().getShortDescription(), b);
+        });
+    }
+
+    @Test
+    public void taskListenerAfterRestart() {
+        AtomicReference<String> projectName = new AtomicReference<>();
+        story.then(r -> {
+            configureAgentListener();
+            configureCloud();
+            WorkflowRun b = getPipelineJobThenScheduleRun(r);
+            projectName.set(b.getParent().getFullName());
+            r.waitForMessage("+ sleep", b);
+        });
+        story.then(r -> {
+            WorkflowRun b = r.jenkins.getItemByFullName(projectName.get(), WorkflowJob.class).getBuildByNumber(1);
+            Optional<Node> first = r.jenkins.getNodes().stream().filter(KubernetesSlave.class::isInstance).findFirst();
+            assertTrue("Kubernetes node should be present after restart", first.isPresent());
+            KubernetesSlave node = (KubernetesSlave) first.get();
+            r.waitForMessage("Ready to run", b);
+            waitForTemplate(node).getListener().getLogger().println("This got printed");
+            r.waitForMessage("This got printed", b);
+            b.getExecutor().interrupt();
+            r.assertBuildStatus(Result.ABORTED, r.waitForCompletion(b));
+        });
+    }
+
+    @Test
+    public void taskListenerAfterRestart_multipleLabels() {
+        AtomicReference<String> projectName = new AtomicReference<>();
+        story.then(r -> {
+            configureAgentListener();
+            configureCloud();
+            WorkflowRun b = getPipelineJobThenScheduleRun(r);
+            projectName.set(b.getParent().getFullName());
+            r.waitForMessage("+ sleep", b);
+        });
+        story.then(r -> {
+            WorkflowRun b = r.jenkins.getItemByFullName(projectName.get(), WorkflowJob.class).getBuildByNumber(1);
+            Optional<Node> first = r.jenkins.getNodes().stream().filter(KubernetesSlave.class::isInstance).findFirst();
+            assertTrue("Kubernetes node should be present after restart", first.isPresent());
+            KubernetesSlave node = (KubernetesSlave) first.get();
+            r.waitForMessage("Ready to run", b);
+            waitForTemplate(node).getListener().getLogger().println("This got printed");
+            r.waitForMessage("This got printed", b);
+            b.getExecutor().interrupt();
+            r.assertBuildStatus(Result.ABORTED, r.waitForCompletion(b));
+        });
+    }
+
+    private PodTemplate waitForTemplate(KubernetesSlave node) throws InterruptedException {
+        while (node.getTemplateOrNull() == null) {
+            Thread.sleep(100L);
+        }
+        return node.getTemplate();
     }
 
     @Test
     public void getContainerLogWithRestart() throws Exception {
+        AtomicReference<String> projectName = new AtomicReference<>();
         story.then(r -> {
+            configureAgentListener();
             configureCloud();
             r.jenkins.addNode(new DumbSlave("slave", "dummy", tmp.newFolder("remoteFS").getPath(), "1",
                     Node.Mode.NORMAL, "", new JNLPLauncher(), RetentionStrategy.NOOP,
                     Collections.<NodeProperty<?>>emptyList())); // TODO JENKINS-26398 clumsy
-            WorkflowJob p = r.jenkins.createProject(WorkflowJob.class, "p");
-            p.setDefinition(new CpsFlowDefinition(loadPipelineScript("getContainerLogWithRestart.groovy")
-                    , true));
-            WorkflowRun b = p.scheduleBuild2(0).waitForStart();
+            WorkflowRun b = getPipelineJobThenScheduleRun(r);
+            projectName.set(b.getParent().getFullName());
             // we need to wait until we are sure that the sh
             // step has started...
             r.waitForMessage("+ sleep 5", b);
         });
         story.then(r -> {
-            WorkflowRun b = r.jenkins.getItemByFullName("p", WorkflowJob.class).getBuildByNumber(1);
+            WorkflowRun b = r.jenkins.getItemByFullName(projectName.get(), WorkflowJob.class).getBuildByNumber(1);
             r.assertBuildStatusSuccess(r.waitForCompletion(b));
             r.assertLogContains("[Pipeline] containerLog", b);
             r.assertLogContains("[Pipeline] End of Pipeline", b);
         });
+    }
+
+    private WorkflowRun getPipelineJobThenScheduleRun(JenkinsRule r) throws InterruptedException, ExecutionException, IOException {
+        return createPipelineJobThenScheduleRun(r, getClass(), name.getMethodName());
     }
 }

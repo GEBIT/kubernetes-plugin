@@ -1,6 +1,5 @@
 package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 
-import static org.csanchez.jenkins.plugins.kubernetes.pipeline.Constants.*;
 
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
@@ -10,6 +9,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -19,12 +19,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import hudson.Proc;
 import io.fabric8.kubernetes.client.dsl.ExecWatch;
+import jenkins.util.Timer;
+import static org.csanchez.jenkins.plugins.kubernetes.pipeline.Constants.CTRL_C;
+import static org.csanchez.jenkins.plugins.kubernetes.pipeline.Constants.EXIT;
+import static org.csanchez.jenkins.plugins.kubernetes.pipeline.Constants.NEWLINE;
 
 /**
  * Handle the liveness of the processes executed in containers, wait for them to finish and process exit codes.
  *
  */
-public class ContainerExecProc extends Proc implements Closeable {
+public class ContainerExecProc extends Proc implements Closeable, Runnable {
 
     private static final Logger LOGGER = Logger.getLogger(ContainerExecProc.class.getName());
 
@@ -53,10 +57,11 @@ public class ContainerExecProc extends Proc implements Closeable {
         this.alive = alive;
         this.finished = finished;
         this.error = error;
+        Timer.get().schedule(this, 1, TimeUnit.MINUTES);
     }
 
     @Override
-    public boolean isAlive() throws IOException, InterruptedException {
+    public boolean isAlive() {
         return alive.get();
     }
 
@@ -145,4 +150,21 @@ public class ContainerExecProc extends Proc implements Closeable {
             LOGGER.log(Level.INFO, "failed to close watch", e);
         }
     }
+
+    @Override
+    public void run() {
+        if (!isAlive()) {
+            LOGGER.fine("process is no longer alive");
+            return;
+        }
+        try {
+            stdin.write(NEWLINE.getBytes(StandardCharsets.UTF_8));
+            stdin.flush();
+            LOGGER.fine("sent a newline to keep socket alive");
+            Timer.get().schedule(this, 1, TimeUnit.MINUTES);
+        } catch (IOException x) {
+            LOGGER.log(Level.FINE, "socket keepalive failed", x);
+        }
+    }
+
 }

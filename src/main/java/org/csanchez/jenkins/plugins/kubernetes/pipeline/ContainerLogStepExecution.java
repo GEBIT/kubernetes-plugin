@@ -19,15 +19,15 @@ package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 import hudson.model.TaskListener;
 import hudson.util.LogTaskListener;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.fabric8.kubernetes.client.dsl.*;
+import io.fabric8.kubernetes.client.dsl.LogWatch;
+import io.fabric8.kubernetes.client.dsl.TailPrettyLoggable;
+import io.fabric8.kubernetes.client.dsl.TimeTailPrettyLoggable;
 import org.jenkinsci.plugins.workflow.steps.StepContext;
 import org.jenkinsci.plugins.workflow.steps.SynchronousNonBlockingStepExecution;
 
-import java.io.*;
+import java.io.PrintStream;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import static org.csanchez.jenkins.plugins.kubernetes.pipeline.Resources.closeQuietly;
 
 public class ContainerLogStepExecution extends SynchronousNonBlockingStepExecution<String> {
     private static final long serialVersionUID = 5588861066775717487L;
@@ -71,18 +71,18 @@ public class ContainerLogStepExecution extends SynchronousNonBlockingStepExecuti
             client = nodeContext.connectToCloud();
 
             String podName = nodeContext.getPodName();
-            ContainerResource<String, LogWatch, InputStream, PipedOutputStream, OutputStream, PipedInputStream,
-                    String, ExecWatch> container = client.pods()
-                    .inNamespace(nodeContext.getNamespace())
-                    .withName(podName)
-                    .inContainer(containerName);
 
-            TimeTailPrettyLoggable<String, LogWatch> limited = limitBytes > 0 ? container.limitBytes(limitBytes) : container;
+            TimeTailPrettyLoggable<LogWatch> limited = limitBytes > 0
+                    ? client.pods() //
+                            .inNamespace(nodeContext.getNamespace()) //
+                            .withName(podName).inContainer(containerName).limitBytes(limitBytes)
+                    : client.pods() //
+                            .inNamespace(nodeContext.getNamespace()) //
+                            .withName(podName).inContainer(containerName);
 
-            TailPrettyLoggable<String, LogWatch> since = sinceSeconds > 0 ? limited.sinceSeconds(sinceSeconds) : limited;
+            TailPrettyLoggable<LogWatch> since = sinceSeconds > 0 ? limited.sinceSeconds(sinceSeconds) : limited;
 
-            PrettyLoggable<String, LogWatch> tailed = tailingLines > 0 ? since.tailingLines(tailingLines) : since;
-            String log = tailed.getLog();
+            String log = (tailingLines > 0 ? since.tailingLines(tailingLines) : since).getLog();
 
             if (returnLog) {
                 return log;
