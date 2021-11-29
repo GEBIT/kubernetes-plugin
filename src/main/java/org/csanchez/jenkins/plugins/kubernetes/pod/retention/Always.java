@@ -43,11 +43,6 @@ public class Always extends PodRetention implements Serializable {
         return this.toString().hashCode();
     }
 
-    @Override
-    public String toString() {
-        return Messages.always();
-    }
-
     @Extension
     @Symbol("always")
     public static class DescriptorImpl extends PodRetentionDescriptor {

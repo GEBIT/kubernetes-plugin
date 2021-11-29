@@ -48,11 +48,6 @@ public class Default extends PodRetention implements Serializable {
         return this.toString().hashCode();
     }
 
-    @Override
-    public String toString() {
-        return Messages._default();
-    }
-
     @Extension
     public static class FilterImpl extends DescriptorVisibilityFilter {
 

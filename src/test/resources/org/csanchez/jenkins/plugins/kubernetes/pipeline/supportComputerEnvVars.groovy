@@ -2,10 +2,11 @@ pipeline {
 	agent {
 
         kubernetes{
+                label 'buildPropertyVars'
                 containerTemplate{
                         name 'openjdk'
                         image 'openjdk'
-                        workingDir '/home/jenkins/agent'
+                        workingDir '/home/jenkins'
                         ttyEnabled true
                         command 'cat'
                         args ''

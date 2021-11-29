@@ -1,7 +1,7 @@
 //noinspection GrPackage
-podTemplate()
+podTemplate(label: 'getContainerLogWithRestart')
 {
-    node(POD_LABEL) {
+    node ('getContainerLogWithRestart') {
         stage('container log') {
             sh 'for i in `seq 1 5`; do echo $i; sleep 5; done'
             containerLog 'jnlp'

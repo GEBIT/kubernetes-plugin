@@ -1,8 +1,0 @@
-jenkins:
-  clouds:
-    - kubernetes:
-        name: "kubernetes"
-        templates:
-          - workspaceVolume:
-              persistentVolumeClaimWorkspaceVolume:
-                claimName: "my-claim"

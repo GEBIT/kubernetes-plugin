@@ -1,9 +1,0 @@
-jenkins:
-  clouds:
-    - kubernetes:
-        name: "kubernetes"
-        templates:
-          - volumes:
-            - emptyDirVolume:
-                mountPath: /mnt/path
-                memory: true

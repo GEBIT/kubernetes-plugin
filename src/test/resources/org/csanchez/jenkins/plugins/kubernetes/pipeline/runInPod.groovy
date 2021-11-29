@@ -1,12 +1,11 @@
-podTemplate(label: '$NAME', containers: [
+podTemplate(label: 'runInPod', containers: [
         containerTemplate(name: 'busybox', image: 'busybox', ttyEnabled: true, command: '/bin/cat'),
     ]) {
     semaphore 'podTemplate'
-    node ('$NAME') {
+    node ('runInPod') {
       semaphore 'pod'
       stage('Run') {
         container('busybox') {
-          echo "container=$POD_CONTAINER"
           sh """
             ## durable-task plugin generates a script.sh file.
             ##
@@ -18,4 +17,3 @@ podTemplate(label: '$NAME', containers: [
       }
     }
 }
-semaphore 'after-podtemplate'

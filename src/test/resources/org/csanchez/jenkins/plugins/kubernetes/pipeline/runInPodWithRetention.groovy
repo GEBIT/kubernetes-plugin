@@ -1,8 +1,8 @@
-podTemplate(podRetention: always(), containers: [
+podTemplate(label: 'runInPodWithRetention', podRetention: always(), containers: [
         containerTemplate(name: 'busybox', image: 'busybox', ttyEnabled: true, command: '/bin/cat'),
     ]) {
 
-    node(POD_LABEL) {
+    node ('runInPodWithRetention') {
       stage('Run') {
         container('busybox') {
           sh """

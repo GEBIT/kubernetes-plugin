@@ -1,8 +1,6 @@
-# Kubernetes plugin Pipeline examples
+# Kubernetes plugin pipeline examples
 
-In this directory you can find several Pipeline examples.
+In this dir you can find several pipeline examples.
 
-For more examples that are automatically tested, check:
-
-* [live samples](../src/main/resources/org/csanchez/jenkins/plugins/kubernetes/pipeline/samples)
-* [test scripts](../src/test/resources/org/csanchez/jenkins/plugins/kubernetes/pipeline)
+For more examples that are continuously tested, check the [`src/test/resources/org/csanchez/jenkins/plugins/kubernetes/pipeline`](src/test/resources/org/csanchez/jenkins/plugins/kubernetes/pipeline)
+resources directory.

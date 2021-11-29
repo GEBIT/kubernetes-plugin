@@ -42,11 +42,6 @@ public class Never extends PodRetention implements Serializable {
         return this.toString().hashCode();
     }
 
-    @Override
-    public String toString() {
-        return Messages.never();
-    }
-
     @Extension
     @Symbol("never")
     public static class DescriptorImpl extends PodRetentionDescriptor {

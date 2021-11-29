@@ -1,9 +1,0 @@
-jenkins:
-  clouds:
-    - kubernetes:
-        name: "kubernetes"
-        templates:
-          - volumes:
-            - persistentVolumeClaim:
-                claimName: my-claim
-                mountPath: /mnt/path

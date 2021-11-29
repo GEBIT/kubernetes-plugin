@@ -1,8 +1,8 @@
-def label = "maven-${UUID.randomUUID().toString()}" // TODO use POD_LABEL when available
-def mvnOpts = '-DskipTests -ntp -Darguments="-DskipTests -ntp"'
+def label = "maven-${UUID.randomUUID().toString()}"
+def mvnOpts = '-DskipTests -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn -Darguments="-DskipTests -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn"'
 
 podTemplate(label: label, containers: [
-  containerTemplate(name: 'maven', image: 'maven:3.6.1-jdk-8', ttyEnabled: true, command: 'cat')
+  containerTemplate(name: 'maven', image: 'maven:alpine', ttyEnabled: true, command: 'cat')
   ], volumes: [
   persistentVolumeClaim(mountPath: '/root/.m2/repository', claimName: 'maven-repo', readOnly: false)
   ]) {
@@ -18,7 +18,10 @@ podTemplate(label: label, containers: [
     }
     stage('Release perform') {
       container('maven') {
-          sh "mvn -B ${mvnOpts} release:perform"
+          sh """
+          apk update && apk add git
+          mvn -B ${mvnOpts} release:perform
+          """
       }
     }
   }

@@ -1,21 +1,21 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
+import static hudson.Util.*;
+import static java.nio.charset.StandardCharsets.*;
+import static java.util.stream.Collectors.*;
+import static org.csanchez.jenkins.plugins.kubernetes.ContainerTemplate.*;
+
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -24,16 +24,18 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import edu.umd.cs.findbugs.annotations.CheckForNull;
-import edu.umd.cs.findbugs.annotations.NonNull;
-import edu.umd.cs.findbugs.annotations.Nullable;
-import hudson.slaves.NodeProperty;
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
+
 import org.apache.commons.lang.StringUtils;
 import org.csanchez.jenkins.plugins.kubernetes.model.TemplateEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.PodVolume;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.WorkspaceVolume;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.google.common.base.Preconditions;
+import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
 
 import hudson.Util;
 import hudson.model.Label;
@@ -56,14 +58,6 @@ import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.fabric8.kubernetes.client.KubernetesClientException;
-
-import static hudson.Util.replaceMacro;
-import io.fabric8.kubernetes.client.utils.Serialization;
-import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toMap;
-import static org.csanchez.jenkins.plugins.kubernetes.ContainerTemplate.DEFAULT_WORKING_DIR;
 
 public class PodTemplateUtils {
 
@@ -71,44 +65,33 @@ public class PodTemplateUtils {
 
     private static final Pattern LABEL_VALIDATION = Pattern.compile("[a-zA-Z0-9]([_\\.\\-a-zA-Z0-9]*[a-zA-Z0-9])?");
 
-    @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "tests & emergency admin")
-    public static boolean SUBSTITUTE_ENV = Boolean.getBoolean(PodTemplateUtils.class.getName() + ".SUBSTITUTE_ENV");
-
     /**
      * Combines a {@link ContainerTemplate} with its parent.
      * @param parent        The parent container template (nullable).
      * @param template      The actual container template
      * @return              The combined container template.
      */
-    public static ContainerTemplate combine(@CheckForNull ContainerTemplate parent, @NonNull ContainerTemplate template) {
-        if (template == null) {
-            throw new IllegalArgumentException("Container template should not be null");
-        }
+    public static ContainerTemplate combine(@CheckForNull ContainerTemplate parent, @Nonnull ContainerTemplate template) {
+        Preconditions.checkNotNull(template, "Container template should not be null");
         if (parent == null) {
             return template;
         }
 
         String name = template.getName();
-        String image = isNullOrEmpty(template.getImage()) ? parent.getImage() : template.getImage();
+        String image = Strings.isNullOrEmpty(template.getImage()) ? parent.getImage() : template.getImage();
         boolean privileged = template.isPrivileged() ? template.isPrivileged() : (parent.isPrivileged() ? parent.isPrivileged() : false);
-        String runAsUser = template.getRunAsUser() != null ? template.getRunAsUser() : parent.getRunAsUser();
-        String runAsGroup = template.getRunAsGroup() != null ? template.getRunAsGroup() : parent.getRunAsGroup();
         boolean alwaysPullImage = template.isAlwaysPullImage() ? template.isAlwaysPullImage() : (parent.isAlwaysPullImage() ? parent.isAlwaysPullImage() : false);
-        String workingDir = isNullOrEmpty(template.getWorkingDir()) ? (isNullOrEmpty(parent.getWorkingDir()) ? DEFAULT_WORKING_DIR : parent.getWorkingDir()) : template.getWorkingDir();
-        String command = isNullOrEmpty(template.getCommand()) ? parent.getCommand() : template.getCommand();
-        String args = isNullOrEmpty(template.getArgs()) ? parent.getArgs() : template.getArgs();
+        String workingDir = Strings.isNullOrEmpty(template.getWorkingDir()) ? (Strings.isNullOrEmpty(parent.getWorkingDir()) ? DEFAULT_WORKING_DIR : parent.getWorkingDir()) : template.getWorkingDir();
+        String command = Strings.isNullOrEmpty(template.getCommand()) ? parent.getCommand() : template.getCommand();
+        String args = Strings.isNullOrEmpty(template.getArgs()) ? parent.getArgs() : template.getArgs();
         boolean ttyEnabled = template.isTtyEnabled() ? template.isTtyEnabled() : (parent.isTtyEnabled() ? parent.isTtyEnabled() : false);
-        String resourceRequestCpu = isNullOrEmpty(template.getResourceRequestCpu()) ? parent.getResourceRequestCpu() : template.getResourceRequestCpu();
-        String resourceRequestMemory = isNullOrEmpty(template.getResourceRequestMemory()) ? parent.getResourceRequestMemory() : template.getResourceRequestMemory();
-        String resourceRequestEphemeralStorage = isNullOrEmpty(template.getResourceRequestEphemeralStorage()) ? parent.getResourceRequestEphemeralStorage() : template.getResourceRequestEphemeralStorage();
-        String resourceLimitCpu = isNullOrEmpty(template.getResourceLimitCpu()) ? parent.getResourceLimitCpu() : template.getResourceLimitCpu();
-        String resourceLimitMemory = isNullOrEmpty(template.getResourceLimitMemory()) ? parent.getResourceLimitMemory() : template.getResourceLimitMemory();
-        String resourceLimitEphemeralStorage = isNullOrEmpty(template.getResourceLimitEphemeralStorage()) ? parent.getResourceLimitEphemeralStorage() : template.getResourceLimitEphemeralStorage();
-        String shell = isNullOrEmpty(template.getShell()) ? parent.getShell() : template.getShell();
+        String resourceRequestCpu = Strings.isNullOrEmpty(template.getResourceRequestCpu()) ? parent.getResourceRequestCpu() : template.getResourceRequestCpu();
+        String resourceRequestMemory = Strings.isNullOrEmpty(template.getResourceRequestMemory()) ? parent.getResourceRequestMemory() : template.getResourceRequestMemory();
+        String resourceLimitCpu = Strings.isNullOrEmpty(template.getResourceLimitCpu()) ? parent.getResourceLimitCpu() : template.getResourceLimitCpu();
+        String resourceLimitMemory = Strings.isNullOrEmpty(template.getResourceLimitMemory()) ? parent.getResourceLimitMemory() : template.getResourceLimitMemory();
         Map<String, PortMapping> ports = parent.getPorts().stream()
                 .collect(Collectors.toMap(PortMapping::getName, Function.identity()));
         template.getPorts().stream().forEach(p -> ports.put(p.getName(), p));
-        ContainerLivenessProbe livenessProbe = template.getLivenessProbe() != null ? template.getLivenessProbe() : parent.getLivenessProbe();
 
         ContainerTemplate combined = new ContainerTemplate(image);
         combined.setName(name);
@@ -119,18 +102,12 @@ public class PodTemplateUtils {
         combined.setTtyEnabled(ttyEnabled);
         combined.setResourceLimitCpu(resourceLimitCpu);
         combined.setResourceLimitMemory(resourceLimitMemory);
-        combined.setResourceLimitEphemeralStorage(resourceLimitEphemeralStorage);
         combined.setResourceRequestCpu(resourceRequestCpu);
         combined.setResourceRequestMemory(resourceRequestMemory);
-        combined.setResourceRequestEphemeralStorage(resourceRequestEphemeralStorage);
-        combined.setShell(shell);
         combined.setWorkingDir(workingDir);
         combined.setPrivileged(privileged);
-        combined.setRunAsUser(runAsUser);
-        combined.setRunAsGroup(runAsGroup);
         combined.setEnvVars(combineEnvVars(parent, template));
         combined.setPorts(new ArrayList<>(ports.values()));
-        combined.setLivenessProbe(livenessProbe);
         return combined;
     }
 
@@ -143,29 +120,21 @@ public class PodTemplateUtils {
      *            The actual container
      * @return The combined container.
      */
-    public static Container combine(@CheckForNull Container parent, @NonNull Container template) {
-        if (template == null) {
-            throw new IllegalArgumentException("Container template should not be null");
-        }
+    public static Container combine(@CheckForNull Container parent, @Nonnull Container template) {
+        Preconditions.checkNotNull(template, "Container template should not be null");
         if (parent == null) {
             return template;
         }
 
         String name = template.getName();
-        String image = isNullOrEmpty(template.getImage()) ? parent.getImage() : template.getImage();
+        String image = Strings.isNullOrEmpty(template.getImage()) ? parent.getImage() : template.getImage();
         Boolean privileged = template.getSecurityContext() != null && template.getSecurityContext().getPrivileged() != null
                 ? template.getSecurityContext().getPrivileged()
                 : (parent.getSecurityContext() != null ? parent.getSecurityContext().getPrivileged() : Boolean.FALSE);
-        Long runAsUser = template.getSecurityContext() != null && template.getSecurityContext().getRunAsUser() != null
-                ? template.getSecurityContext().getRunAsUser()
-                : (parent.getSecurityContext() != null ? parent.getSecurityContext().getRunAsUser() : null);
-        Long runAsGroup = template.getSecurityContext() != null && template.getSecurityContext().getRunAsGroup() != null
-                ? template.getSecurityContext().getRunAsGroup()
-                : (parent.getSecurityContext() != null ? parent.getSecurityContext().getRunAsGroup() : null);
-        String imagePullPolicy = isNullOrEmpty(template.getImagePullPolicy()) ? parent.getImagePullPolicy()
+        String imagePullPolicy = Strings.isNullOrEmpty(template.getImagePullPolicy()) ? parent.getImagePullPolicy()
                 : template.getImagePullPolicy();
-        String workingDir = isNullOrEmpty(template.getWorkingDir())
-                ? (isNullOrEmpty(parent.getWorkingDir()) ? DEFAULT_WORKING_DIR : parent.getWorkingDir())
+        String workingDir = Strings.isNullOrEmpty(template.getWorkingDir())
+                ? (Strings.isNullOrEmpty(parent.getWorkingDir()) ? DEFAULT_WORKING_DIR : parent.getWorkingDir())
                 : template.getWorkingDir();
         List<String> command = template.getCommand() == null ? parent.getCommand() : template.getCommand();
         List<String> args = template.getArgs() == null ? parent.getArgs() : template.getArgs();
@@ -177,7 +146,7 @@ public class PodTemplateUtils {
                 .collect(Collectors.toMap(VolumeMount::getMountPath, Function.identity()));
         template.getVolumeMounts().stream().forEach(vm -> volumeMounts.put(vm.getMountPath(), vm));
 
-        ContainerBuilder containerBuilder = new ContainerBuilder(parent) //
+        Container combined = new ContainerBuilder(parent) //
                 .withImage(image) //
                 .withName(name) //
                 .withImagePullPolicy(imagePullPolicy) //
@@ -186,21 +155,16 @@ public class PodTemplateUtils {
                 .withArgs(args) //
                 .withTty(tty) //
                 .withNewResources() //
-                .withRequests(Collections.unmodifiableMap(new HashMap<>(requests))) //
-                .withLimits(Collections.unmodifiableMap(new HashMap<>(limits))) //
+                .withRequests(ImmutableMap.copyOf(requests)) //
+                .withLimits(ImmutableMap.copyOf(limits)) //
                 .endResources() //
                 .withEnv(combineEnvVars(parent, template)) //
                 .withEnvFrom(combinedEnvFromSources(parent, template))
-                .withVolumeMounts(new ArrayList<>(volumeMounts.values()));
-        if ((privileged != null && privileged) || runAsUser != null || runAsGroup != null) {
-            containerBuilder = containerBuilder
-                    .withNewSecurityContext()
-                        .withPrivileged(privileged)
-                        .withRunAsUser(runAsUser)
-                        .withRunAsGroup(runAsGroup)
-                    .endSecurityContext();
-        }
-        return containerBuilder.build();
+                .withNewSecurityContext().withPrivileged(privileged).endSecurityContext() //
+                .withVolumeMounts(new ArrayList<>(volumeMounts.values())) //
+                .build();
+
+        return combined;
     }
 
     private static Map<String, Quantity> combineResources(Container parent, Container template,
@@ -238,30 +202,19 @@ public class PodTemplateUtils {
      * @param template      The child Pod
      */
     public static Pod combine(Pod parent, Pod template) {
-        if (template == null) {
-            throw new IllegalArgumentException("Pod template should not be null");
-        }
+        Preconditions.checkNotNull(template, "Pod template should not be null");
         if (parent == null) {
             return template;
         }
 
-        LOGGER.finest(() -> "Combining pods, parent: " + Serialization.asYaml(parent) + " template: " + Serialization.asYaml(template));
+        LOGGER.log(Level.FINE, "Combining pods, parent: {0}", parent);
+        LOGGER.log(Level.FINE, "Combining pods, template: {0}", template);
 
         Map<String, String> nodeSelector = mergeMaps(parent.getSpec().getNodeSelector(),
                 template.getSpec().getNodeSelector());
-        String serviceAccount = isNullOrEmpty(template.getSpec().getServiceAccount())
+        String serviceAccount = Strings.isNullOrEmpty(template.getSpec().getServiceAccount())
                 ? parent.getSpec().getServiceAccount()
                 : template.getSpec().getServiceAccount();
-        String serviceAccountName = isNullOrEmpty(template.getSpec().getServiceAccountName())
-                ? parent.getSpec().getServiceAccountName()
-                : template.getSpec().getServiceAccountName();
-        String schedulerName = isNullOrEmpty(template.getSpec().getSchedulerName())
-                ? parent.getSpec().getSchedulerName()
-                 : template.getSpec().getSchedulerName();
-
-        Boolean hostNetwork = template.getSpec().getHostNetwork() != null
-                ? template.getSpec().getHostNetwork()
-                : parent.getSpec().getHostNetwork();
 
         Map<String, String> podAnnotations = mergeMaps(parent.getMetadata().getAnnotations(),
                 template.getMetadata().getAnnotations());
@@ -272,16 +225,18 @@ public class PodTemplateUtils {
         imagePullSecrets.addAll(template.getSpec().getImagePullSecrets());
 
         // Containers
-        List<Container> combinedContainers = combineContainers(parent.getSpec().getContainers(), template.getSpec().getContainers());
-
-        // Init containers
-        List<Container> combinedInitContainers = combineContainers(parent.getSpec().getInitContainers(), template.getSpec().getInitContainers());
+        Map<String, Container> combinedContainers = new HashMap<>();
+        Map<String, Container> parentContainers = parent.getSpec().getContainers().stream()
+                .collect(toMap(c -> c.getName(), c -> c));
+        combinedContainers.putAll(parentContainers);
+        combinedContainers.putAll(template.getSpec().getContainers().stream()
+                .collect(toMap(c -> c.getName(), c -> combine(parentContainers.get(c.getName()), c))));
 
         // Volumes
         List<Volume> combinedVolumes = combineVolumes(parent.getSpec().getVolumes(), template.getSpec().getVolumes());
 
         // Tolerations
-        List<Toleration> combinedTolerations = new LinkedList<>();
+        List<Toleration> combinedTolerations = Lists.newLinkedList();
         Optional.ofNullable(parent.getSpec().getTolerations()).ifPresent(combinedTolerations::addAll);
         Optional.ofNullable(template.getSpec().getTolerations()).ifPresent(combinedTolerations::addAll);
 
@@ -294,10 +249,10 @@ public class PodTemplateUtils {
 
         MetadataNested<PodBuilder> metadataBuilder = new PodBuilder(parent).withNewMetadataLike(parent.getMetadata()) //
                 .withAnnotations(podAnnotations).withLabels(podLabels);
-        if (!isNullOrEmpty(template.getMetadata().getName())) {
+        if (!Strings.isNullOrEmpty(template.getMetadata().getName())) {
             metadataBuilder.withName(template.getMetadata().getName());
         }
-        if (!isNullOrEmpty(template.getMetadata().getNamespace())) {
+        if (!Strings.isNullOrEmpty(template.getMetadata().getNamespace())) {
             metadataBuilder.withNamespace(template.getMetadata().getNamespace());
         }
 
@@ -305,31 +260,10 @@ public class PodTemplateUtils {
                 .withNewSpecLike(parent.getSpec()) //
                 .withNodeSelector(nodeSelector) //
                 .withServiceAccount(serviceAccount) //
-                .withServiceAccountName(serviceAccountName) //
-                .withSchedulerName(schedulerName)
-                .withHostNetwork(hostNetwork) //
-                .withContainers(combinedContainers) //
-                .withInitContainers(combinedInitContainers) //
+                .withContainers(Lists.newArrayList(combinedContainers.values())) //
                 .withVolumes(combinedVolumes) //
                 .withTolerations(combinedTolerations) //
-                .withImagePullSecrets(new ArrayList<>(imagePullSecrets));
-
-
-        // Security context
-        if (template.getSpec().getSecurityContext() != null || parent.getSpec().getSecurityContext() != null) {
-            specBuilder.editOrNewSecurityContext()
-                    .withRunAsUser(
-                            template.getSpec().getSecurityContext() != null && template.getSpec().getSecurityContext().getRunAsUser() != null ? template.getSpec().getSecurityContext().getRunAsUser() : (
-                                    parent.getSpec().getSecurityContext() != null && parent.getSpec().getSecurityContext().getRunAsUser() != null ? parent.getSpec().getSecurityContext().getRunAsUser() : null
-                            )
-                    )
-                    .withRunAsGroup(
-                            template.getSpec().getSecurityContext() != null && template.getSpec().getSecurityContext().getRunAsGroup() != null ? template.getSpec().getSecurityContext().getRunAsGroup() : (
-                                    parent.getSpec().getSecurityContext() != null && parent.getSpec().getSecurityContext().getRunAsGroup() != null ? parent.getSpec().getSecurityContext().getRunAsGroup() : null
-                            )
-                    )
-                    .endSecurityContext();
-        }
+                .withImagePullSecrets(Lists.newArrayList(imagePullSecrets));
 
         // podTemplate.setLabel(label);
 //        podTemplate.setEnvVars(combineEnvVars(parent, template));
@@ -339,23 +273,11 @@ public class PodTemplateUtils {
 //        podTemplate.setYaml(template.getYaml() == null ? parent.getYaml() : template.getYaml());
 
         Pod pod = specBuilder.endSpec().build();
-        LOGGER.finest(() -> "Pods combined: " + Serialization.asYaml(pod));
+        LOGGER.log(Level.FINE, "Pods combined: {0}", pod);
         return pod;
     }
 
-    @NonNull
-    private static List<Container> combineContainers(List<Container> parent, List<Container> child) {
-        LinkedHashMap<String, Container> combinedContainers = new LinkedHashMap<>(); // Need to retain insertion order
-        Map<String, Container> parentContainers = parent.stream()
-                .collect(toMap(Container::getName, c -> c, throwingMerger(), LinkedHashMap::new));
-        Map<String, Container> childContainers = child.stream()
-                .collect(toMap(Container::getName, c -> combine(parentContainers.get(c.getName()), c), throwingMerger(), LinkedHashMap::new));
-        combinedContainers.putAll(parentContainers);
-        combinedContainers.putAll(childContainers);
-        return new ArrayList<>(combinedContainers.values());
-    }
-
-    private static List<Volume> combineVolumes(@NonNull List<Volume> volumes1, @NonNull List<Volume> volumes2) {
+    private static List<Volume> combineVolumes(@Nonnull List<Volume> volumes1, @Nonnull List<Volume> volumes2) {
         Map<String, Volume> volumesByName = volumes1.stream().collect(Collectors.toMap(Volume::getName, Function.identity()));
         volumes2.forEach(v -> volumesByName.put(v.getName(), v));
         return new ArrayList<>(volumesByName.values());
@@ -368,9 +290,7 @@ public class PodTemplateUtils {
      * @return              The combined container template.
      */
     public static PodTemplate combine(PodTemplate parent, PodTemplate template) {
-        if (template == null) {
-            throw new IllegalArgumentException("Pod template should not be null");
-        }
+        Preconditions.checkNotNull(template, "Pod template should not be null");
         if (parent == null) {
             return template;
         }
@@ -380,9 +300,8 @@ public class PodTemplateUtils {
 
         String name = template.getName();
         String label = template.getLabel();
-        String nodeSelector = isNullOrEmpty(template.getNodeSelector()) ? parent.getNodeSelector() : template.getNodeSelector();
-        String serviceAccount = isNullOrEmpty(template.getServiceAccount()) ? parent.getServiceAccount() : template.getServiceAccount();
-        String schedulerName = isNullOrEmpty(template.getSchedulerName()) ? parent.getSchedulerName() : template.getSchedulerName();
+        String nodeSelector = Strings.isNullOrEmpty(template.getNodeSelector()) ? parent.getNodeSelector() : template.getNodeSelector();
+        String serviceAccount = Strings.isNullOrEmpty(template.getServiceAccount()) ? parent.getServiceAccount() : template.getServiceAccount();
         Node.Mode nodeUsageMode = template.getNodeUsageMode() == null ? parent.getNodeUsageMode() : template.getNodeUsageMode();
 
         Set<PodAnnotation> podAnnotations = new LinkedHashSet<>();
@@ -406,29 +325,27 @@ public class PodTemplateUtils {
         combinedVolumes.putAll(parentVolumes);
         combinedVolumes.putAll(template.getVolumes().stream().collect(toMap(v -> v.getMountPath(), v -> v)));
 
-        WorkspaceVolume workspaceVolume = WorkspaceVolume.merge(parent.getWorkspaceVolume(), template.getWorkspaceVolume());
+        WorkspaceVolume workspaceVolume = template.isCustomWorkspaceVolumeEnabled() && template.getWorkspaceVolume() != null ? template.getWorkspaceVolume() : parent.getWorkspaceVolume();
 
         //Tool location node properties
-        List<NodeProperty<?>> nodeProperties = new ArrayList<>(parent.getNodeProperties());
-        nodeProperties.addAll(template.getNodeProperties());
+        PodTemplateToolLocation toolLocationNodeProperties = parent.getNodeProperties();
+        toolLocationNodeProperties.addAll(template.getNodeProperties());
 
-        PodTemplate podTemplate = new PodTemplate(template.getId());
+        PodTemplate podTemplate = new PodTemplate();
         podTemplate.setName(name);
-        podTemplate.setNamespace(!isNullOrEmpty(template.getNamespace()) ? template.getNamespace() : parent.getNamespace());
+        podTemplate.setNamespace(!Strings.isNullOrEmpty(template.getNamespace()) ? template.getNamespace() : parent.getNamespace());
         podTemplate.setLabel(label);
         podTemplate.setNodeSelector(nodeSelector);
         podTemplate.setServiceAccount(serviceAccount);
-        podTemplate.setSchedulerName(schedulerName);
         podTemplate.setEnvVars(combineEnvVars(parent, template));
         podTemplate.setContainers(new ArrayList<>(combinedContainers.values()));
         podTemplate.setWorkspaceVolume(workspaceVolume);
         podTemplate.setVolumes(new ArrayList<>(combinedVolumes.values()));
         podTemplate.setImagePullSecrets(new ArrayList<>(imagePullSecrets));
         podTemplate.setAnnotations(new ArrayList<>(podAnnotations));
-        podTemplate.setNodeProperties(nodeProperties);
+        podTemplate.setNodeProperties(toolLocationNodeProperties);
         podTemplate.setNodeUsageMode(nodeUsageMode);
-        podTemplate.setYamlMergeStrategy(template.getYamlMergeStrategy());
-        podTemplate.setInheritFrom(!isNullOrEmpty(template.getInheritFrom()) ?
+        podTemplate.setInheritFrom(!Strings.isNullOrEmpty(template.getInheritFrom()) ?
                                    template.getInheritFrom() : parent.getInheritFrom());
 
         podTemplate.setInstanceCap(template.getInstanceCap() != Integer.MAX_VALUE ?
@@ -444,30 +361,16 @@ public class PodTemplateUtils {
                                              template.getActiveDeadlineSeconds() : parent.getActiveDeadlineSeconds());
 
 
-        podTemplate.setServiceAccount(!isNullOrEmpty(template.getServiceAccount()) ?
+        podTemplate.setServiceAccount(!Strings.isNullOrEmpty(template.getServiceAccount()) ?
                                       template.getServiceAccount() : parent.getServiceAccount());
 
-        podTemplate.setSchedulerName(!isNullOrEmpty(template.getSchedulerName()) ?
-                                      template.getSchedulerName() : parent.getSchedulerName());
-
+        podTemplate.setCustomWorkspaceVolumeEnabled(template.isCustomWorkspaceVolumeEnabled() ?
+                                                    template.isCustomWorkspaceVolumeEnabled() : parent.isCustomWorkspaceVolumeEnabled());
         podTemplate.setPodRetention(template.getPodRetention());
-        podTemplate.setShowRawYaml(template.isShowRawYamlSet() ? template.isShowRawYaml() : parent.isShowRawYaml());
-
-        podTemplate.setRunAsUser(template.getRunAsUser() != null ? template.getRunAsUser() : parent.getRunAsUser());
-        podTemplate.setRunAsGroup(template.getRunAsGroup() != null ? template.getRunAsGroup() : parent.getRunAsGroup());
-
-        podTemplate.setSupplementalGroups(template.getSupplementalGroups() != null ? template.getSupplementalGroups() : parent.getSupplementalGroups());
-
-        if (template.isHostNetworkSet()) {
-            podTemplate.setHostNetwork(template.isHostNetwork());
-        } else if (parent.isHostNetworkSet()) {
-            podTemplate.setHostNetwork(parent.isHostNetwork());
-        }
 
         List<String> yamls = new ArrayList<>(parent.getYamls());
         yamls.addAll(template.getYamls());
         podTemplate.setYamls(yamls);
-        podTemplate.setListener(template.getListener());
 
         LOGGER.log(Level.FINEST, "Pod templates combined: {0}", podTemplate);
         return podTemplate;
@@ -487,16 +390,16 @@ public class PodTemplateUtils {
         }
 
         StringBuilder sb = new StringBuilder();
-        if (!isNullOrEmpty(defaultProviderTemplate)) {
+        if (!Strings.isNullOrEmpty(defaultProviderTemplate)) {
             sb.append(defaultProviderTemplate).append(" ");
 
         }
-        if (!isNullOrEmpty(template.getInheritFrom())) {
+        if (!Strings.isNullOrEmpty(template.getInheritFrom())) {
             sb.append(template.getInheritFrom()).append(" ");
         }
         String inheritFrom = sb.toString();
 
-        if (isNullOrEmpty(inheritFrom)) {
+        if (Strings.isNullOrEmpty(inheritFrom)) {
             return template;
         } else {
             String[] parentNames = inheritFrom.split("[ ]+");
@@ -559,11 +462,21 @@ public class PodTemplateUtils {
      * Substitutes a placeholder with a value found in the environment.
      * @param s     The placeholder. Should be use the format: ${placeholder}.
      * @return      The substituted value if found, or the input value otherwise.
-     * @deprecated Potentially insecure; a no-op by default.
+     */
+    public static String substituteEnv(String s) {
+        return replaceMacro(s, System.getenv());
+    }
+
+    /**
+     * Substitutes a placeholder with a value found in the environment.
+     * @deprecated check if it is null or empty in the caller method, then use {@link #substituteEnv(String)}
+     * @param s             The placeholder. Should be use the format: ${placeholder}.
+     * @param defaultValue  The default value to return if no match is found.
+     * @return              The substituted value if found, or the default value otherwise.
      */
     @Deprecated
-    public static String substituteEnv(String s) {
-        return SUBSTITUTE_ENV ? replaceMacro(s, System.getenv()) : s;
+    public static String substituteEnv(String s, String defaultValue) {
+        return substitute(s, System.getenv(), defaultValue);
     }
 
     /**
@@ -588,24 +501,14 @@ public class PodTemplateUtils {
      */
     @Deprecated
     public static String substitute(String s, Map<String, String> properties, String defaultValue) {
-        return isNullOrEmpty(s) ? defaultValue : replaceMacro(s, properties);
+        return Strings.isNullOrEmpty(s) ? defaultValue : replaceMacro(s, properties);
     }
 
     public static Pod parseFromYaml(String yaml) {
-        String s = yaml;
         try (KubernetesClient client = new DefaultKubernetesClient()) {
-            // JENKINS-57116
-            if (StringUtils.isBlank(s)) {
-                LOGGER.log(Level.WARNING, "[JENKINS-57116] Trying to parse invalid yaml: \"{0}\"", yaml);
-                s = "{}";
-            }
-            Pod podFromYaml;
-            try (InputStream is = new ByteArrayInputStream(s.getBytes(UTF_8))) {
-                podFromYaml = client.pods().load(is).get();
-            } catch (IOException | KubernetesClientException e) {
-                throw new RuntimeException(String.format("Failed to parse yaml: \"%s\"", yaml), e);
-            }
-            LOGGER.finest(() -> "Parsed pod template from yaml: " + Serialization.asYaml(podFromYaml));
+            Pod podFromYaml = client.pods().load(new ByteArrayInputStream((yaml == null ? "" : yaml).getBytes(UTF_8)))
+                    .get();
+            LOGGER.log(Level.FINEST, "Parsed pod template from yaml: {0}", podFromYaml);
             // yaml can be just a fragment, avoid NPEs
             if (podFromYaml.getMetadata() == null) {
                 podFromYaml.setMetadata(new ObjectMeta());
@@ -658,49 +561,25 @@ public class PodTemplateUtils {
         return StringUtils.isBlank(label) ? true : label.length() <= 63 && LABEL_VALIDATION.matcher(label).matches();
     }
 
-    /** TODO perhaps enforce https://docs.docker.com/engine/reference/commandline/tag/#extended-description */
-    public static boolean validateImage(String image) {
-        return image != null && image.matches("\\S+");
-    }
-
     private static List<EnvVar> combineEnvVars(Container parent, Container template) {
-        Map<String,EnvVar> combinedEnvVars = mergeMaps(envVarstoMap(parent.getEnv()),envVarstoMap(template.getEnv()));
-        return combinedEnvVars.entrySet().stream()
-                .filter(envVar -> !isNullOrEmpty(envVar.getKey()))
-                .map(Map.Entry::getValue)
-                .collect(toList());
-    }
-
-    static Map<String, EnvVar> envVarstoMap(List<EnvVar> envVarList) {
-        return envVarList.stream().collect(toMap(EnvVar::getName, Function.identity()));
+        List<EnvVar> combinedEnvVars = new ArrayList<>();
+        combinedEnvVars.addAll(parent.getEnv());
+        combinedEnvVars.addAll(template.getEnv());
+        return combinedEnvVars.stream().filter(envVar -> !Strings.isNullOrEmpty(envVar.getName())).collect(toList());
     }
 
     private static List<TemplateEnvVar> combineEnvVars(ContainerTemplate parent, ContainerTemplate template) {
-        return combineEnvVars(parent.getEnvVars(), template.getEnvVars());
+        List<TemplateEnvVar> combinedEnvVars = new ArrayList<>();
+        combinedEnvVars.addAll(parent.getEnvVars());
+        combinedEnvVars.addAll(template.getEnvVars());
+        return combinedEnvVars.stream().filter(envVar -> !Strings.isNullOrEmpty(envVar.getKey())).collect(toList());
     }
 
     private static List<TemplateEnvVar> combineEnvVars(PodTemplate parent, PodTemplate template) {
-        return combineEnvVars(parent.getEnvVars(), template.getEnvVars());
-    }
-
-    private static List<TemplateEnvVar> combineEnvVars(List<TemplateEnvVar> parent, List<TemplateEnvVar> child) {
-        Map<String,TemplateEnvVar> combinedEnvVars = mergeMaps(templateEnvVarstoMap(parent),templateEnvVarstoMap(child));
-        return combinedEnvVars
-                .entrySet()
-                .stream()
-                .filter(entry -> !isNullOrEmpty(entry.getKey()))
-                .map(Map.Entry::getValue)
-                .collect(toList());
-    }
-
-    static Map<String, TemplateEnvVar> templateEnvVarstoMap(List<TemplateEnvVar> envVarList) {
-        return envVarList
-                .stream()
-                .collect(Collectors.toMap(TemplateEnvVar::getKey, Function.identity(), throwingMerger(), LinkedHashMap::new));
-    }
-
-    private static <T> BinaryOperator<T> throwingMerger() {
-        return (u,v) -> { throw new IllegalStateException(String.format("Duplicate key %s", u)); };
+        List<TemplateEnvVar> combinedEnvVars = new ArrayList<>();
+        combinedEnvVars.addAll(parent.getEnvVars());
+        combinedEnvVars.addAll(template.getEnvVars());
+        return combinedEnvVars.stream().filter(envVar -> !Strings.isNullOrEmpty(envVar.getKey())).collect(toList());
     }
 
     private static List<EnvFromSource> combinedEnvFromSources(Container parent, Container template) {
@@ -708,38 +587,17 @@ public class PodTemplateUtils {
         combinedEnvFromSources.addAll(parent.getEnvFrom());
         combinedEnvFromSources.addAll(template.getEnvFrom());
         return combinedEnvFromSources.stream().filter(envFromSource ->
-                envFromSource.getConfigMapRef() != null && !isNullOrEmpty(envFromSource.getConfigMapRef().getName()) ||
-                        envFromSource.getSecretRef() != null && !isNullOrEmpty(envFromSource.getSecretRef().getName())
+                envFromSource.getConfigMapRef() != null && !Strings.isNullOrEmpty(envFromSource.getConfigMapRef().getName()) ||
+                        envFromSource.getSecretRef() != null && !Strings.isNullOrEmpty(envFromSource.getSecretRef().getName())
         ).collect(toList());
     }
 
     private static <K, V> Map<K, V> mergeMaps(Map<K, V> m1, Map<K, V> m2) {
-        Map<K, V> m = new LinkedHashMap<>();
+        Map<K, V> m = new HashMap<>();
         if (m1 != null)
             m.putAll(m1);
         if (m2 != null)
             m.putAll(m2);
         return m;
-    }
-
-    static Long parseLong(String value) {
-        String s = Util.fixEmptyAndTrim(value);
-        if (s != null) {
-            try {
-                return Long.parseLong(s);
-            } catch (NumberFormatException e) {
-                return null;
-            }
-        } else {
-            return null;
-        }
-    }
-
-    public static boolean isNullOrEmpty(@Nullable String string) {
-        return string == null || string.length() == 0;
-    }
-
-    public static @Nullable String emptyToNull(@Nullable String string) {
-        return isNullOrEmpty(string) ? null : string;
     }
 }

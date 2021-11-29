@@ -1,9 +1,0 @@
-jenkins:
-  clouds:
-    - kubernetes:
-        name: "kubernetes"
-        templates:
-          - envVars:
-            - envVar:
-                key: key
-                value: value

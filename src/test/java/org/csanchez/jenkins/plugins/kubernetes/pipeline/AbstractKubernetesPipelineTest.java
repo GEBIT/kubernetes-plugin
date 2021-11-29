@@ -27,25 +27,20 @@ package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 import static java.util.Arrays.*;
 import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.*;
 
-import java.io.IOException;
-import java.util.Map;
-import java.util.concurrent.ExecutionException;
+import java.net.InetAddress;
+import java.net.URL;
 import java.util.logging.Level;
+import java.util.logging.Logger;
 
-import hudson.slaves.NodeProvisioner;
-import io.fabric8.kubernetes.api.model.NamespaceBuilder;
-import io.fabric8.kubernetes.client.KubernetesClient;
-import io.jenkins.plugins.kubernetes.NoDelayProvisionerStrategy;
+import org.apache.commons.compress.utils.IOUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.csanchez.jenkins.plugins.kubernetes.ContainerEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.ContainerTemplate;
 import org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud;
-import org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil;
 import org.csanchez.jenkins.plugins.kubernetes.PodTemplate;
 import org.csanchez.jenkins.plugins.kubernetes.model.KeyValueEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.model.SecretEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.model.TemplateEnvVar;
-import org.jenkinsci.plugins.workflow.job.WorkflowJob;
-import org.jenkinsci.plugins.workflow.job.WorkflowRun;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
@@ -60,6 +55,7 @@ import hudson.slaves.EnvironmentVariablesNodeProperty;
 import hudson.slaves.NodeProperty;
 import hudson.slaves.NodePropertyDescriptor;
 import hudson.util.DescribableList;
+import jenkins.model.JenkinsLocationConfiguration;
 
 public abstract class AbstractKubernetesPipelineTest {
     protected static final String CONTAINER_ENV_VAR_VALUE = "container-env-var-value";
@@ -73,10 +69,8 @@ public abstract class AbstractKubernetesPipelineTest {
     @Rule
     public JenkinsRuleNonLocalhost r = new JenkinsRuleNonLocalhost();
     @Rule
-    public LoggerRule logs = new LoggerRule()
-            .recordPackage(KubernetesCloud.class, Level.FINE)
-            .recordPackage(NoDelayProvisionerStrategy.class, Level.FINE)
-            .record(NodeProvisioner.class, Level.FINE);
+    public LoggerRule logs = new LoggerRule().record(Logger.getLogger(KubernetesCloud.class.getPackage().getName()),
+            Level.ALL);
 
     @BeforeClass
     public static void isKubernetesConfigured() throws Exception {
@@ -88,57 +82,14 @@ public abstract class AbstractKubernetesPipelineTest {
 
     private String projectName;
 
-    protected WorkflowJob p;
-
-    protected WorkflowRun b;
-
     @Before
     public void defineProjectName() {
         // Add spaces before uppercases
-        this.projectName = generateProjectName(name.getMethodName());
+        this.projectName = name.getMethodName().replaceAll("([A-Z])", " $1");
     }
 
     protected String getProjectName() {
         return projectName;
-    }
-
-    /**
-     * Creates a pipeline job using <methodName>.groovy as pipeline definition,
-     * then schedule it and wait for it to start.
-     *
-     * Resolves $NAME to the method name in order to avoid any hard-coded reference
-     * to the method name within the pipeline definition.
-     *
-     * @return The scheduled pipeline run
-     * @throws IOException If something gets wrong when creating the pipeline job
-     * @throws ExecutionException If something went wrong while retrieving the run object
-     * @throws InterruptedException If the thread gets interrupted while waiting for the run to start
-     */
-    protected final WorkflowRun createJobThenScheduleRun() throws IOException, ExecutionException, InterruptedException {
-        return createJobThenScheduleRun(null);
-    }
-
-    /**
-     * Creates a pipeline job using <methodName>.groovy as pipeline definition,
-     * then schedule it and wait for it to start.
-     *
-     * Resolves $NAME to the method name in order to avoid any hard-coded reference
-     * to the method name within the pipeline definition. Also resolves any reference provided in the given env map.
-     *
-     * @param env an environment map to resolve in the pipeline script
-     * @return The scheduled pipeline run
-     * @throws IOException If something gets wrong when creating the pipeline job
-     * @throws ExecutionException If something went wrong while retrieving the run object
-     * @throws InterruptedException If the thread gets interrupted while waiting for the run to start
-     */
-    protected final WorkflowRun createJobThenScheduleRun(Map<String, String> env) throws IOException, ExecutionException, InterruptedException {
-        b = createPipelineJobThenScheduleRun(r, getClass(), name.getMethodName(), env);
-        p = b.getParent();
-        return b;
-    }
-
-    protected final String loadPipelineDefinition() {
-        return KubernetesTestUtil.loadPipelineDefinition(getClass(), name.getMethodName(), null);
     }
 
     @Before
@@ -148,7 +99,17 @@ public abstract class AbstractKubernetesPipelineTest {
         cloud.getTemplates().clear();
         cloud.addTemplate(buildBusyboxTemplate("busybox"));
 
-        setupHost();
+        // Agents running in Kubernetes (minikube) need to connect to this server, so localhost does not work
+        URL url = r.getURL();
+
+        String hostAddress = System.getProperty("jenkins.host.address");
+        if (StringUtils.isBlank(hostAddress)) {
+            hostAddress = InetAddress.getLocalHost().getHostAddress();
+        }
+        System.err.println("Calling home to address: " + hostAddress);
+        URL nonLocalhostUrl = new URL(url.getProtocol(), hostAddress, url.getPort(),
+                url.getFile());
+        JenkinsLocationConfiguration.get().setUrl(nonLocalhostUrl.toString());
 
         r.jenkins.clouds.add(cloud);
 
@@ -165,7 +126,6 @@ public abstract class AbstractKubernetesPipelineTest {
         // Create a busybox template
         PodTemplate podTemplate = new PodTemplate();
         podTemplate.setLabel(label);
-        podTemplate.setTerminationGracePeriodSeconds(0L);
 
         ContainerTemplate containerTemplate = new ContainerTemplate("busybox", "busybox", "cat", "");
         containerTemplate.setTtyEnabled(true);
@@ -175,26 +135,27 @@ public abstract class AbstractKubernetesPipelineTest {
     }
 
     protected String loadPipelineScript(String name) {
-        return KubernetesTestUtil.loadPipelineScript(getClass(), name);
+        return loadPipelineScript(getClass(), name);
+    }
+
+    public static String loadPipelineScript(Class<?> clazz, String name) {
+        try {
+            return new String(IOUtils.toByteArray(clazz.getResourceAsStream(name)));
+        } catch (Throwable t) {
+            throw new RuntimeException("Could not read resource:[" + name + "].");
+        }
     }
 
     private static void setEnvVariables(PodTemplate podTemplate) {
-        TemplateEnvVar podSecretEnvVar = new SecretEnvVar("POD_ENV_VAR_FROM_SECRET", "pod-secret", SECRET_KEY, false);
+        TemplateEnvVar podSecretEnvVar = new SecretEnvVar("POD_ENV_VAR_FROM_SECRET", "pod-secret", SECRET_KEY);
         TemplateEnvVar podSimpleEnvVar = new KeyValueEnvVar("POD_ENV_VAR", POD_ENV_VAR_VALUE);
         podTemplate.setEnvVars(asList(podSecretEnvVar, podSimpleEnvVar));
         TemplateEnvVar containerEnvVariable = new KeyValueEnvVar("CONTAINER_ENV_VAR", CONTAINER_ENV_VAR_VALUE);
         TemplateEnvVar containerEnvVariableLegacy = new ContainerEnvVar("CONTAINER_ENV_VAR_LEGACY",
                 CONTAINER_ENV_VAR_VALUE);
         TemplateEnvVar containerSecretEnvVariable = new SecretEnvVar("CONTAINER_ENV_VAR_FROM_SECRET",
-                                                                     "container-secret", SECRET_KEY, false);
+                "container-secret", SECRET_KEY);
         podTemplate.getContainers().get(0)
                 .setEnvVars(asList(containerEnvVariable, containerEnvVariableLegacy, containerSecretEnvVariable));
-    }
-
-    protected void createNamespaceIfNotExist(KubernetesClient client, String namespace) {
-        if (client.namespaces().withName(namespace).get() == null) {
-            client.namespaces().createOrReplace(
-                    new NamespaceBuilder().withNewMetadata().withName(namespace).endMetadata().build());
-        }
     }
 }

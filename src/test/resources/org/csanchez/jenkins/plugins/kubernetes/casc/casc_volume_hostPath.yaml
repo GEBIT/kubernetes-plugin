@@ -1,9 +1,0 @@
-jenkins:
-  clouds:
-    - kubernetes:
-        name: "kubernetes"
-        templates:
-          - volumes:
-            - hostPathVolume:
-                hostPath: /host/path
-                mountPath: /mnt/path

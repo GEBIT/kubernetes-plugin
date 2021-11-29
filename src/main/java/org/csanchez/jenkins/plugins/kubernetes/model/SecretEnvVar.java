@@ -45,14 +45,12 @@ public class SecretEnvVar extends TemplateEnvVar {
 
     private String secretName;
     private String secretKey;
-    private Boolean optional;
 
     @DataBoundConstructor
-    public SecretEnvVar(String key, String secretName, String secretKey, Boolean optional) {
+    public SecretEnvVar(String key, String secretName, String secretKey) {
         super(key);
         this.secretName = secretName;
         this.secretKey = secretKey;
-        this.optional = optional;
     }
 
     @Override
@@ -61,11 +59,7 @@ public class SecretEnvVar extends TemplateEnvVar {
                 .withName(getKey()) //
                 .withValueFrom(new EnvVarSourceBuilder() //
                         .withSecretKeyRef(
-                             (new SecretKeySelectorBuilder()
-                                  .withKey(secretKey)
-                                  .withName(secretName)
-                                  .withOptional(optional)
-                                  .build())) //
+                                new SecretKeySelectorBuilder().withKey(secretKey).withName(secretName).build()) //
                         .build()) //
                 .build();
     }
@@ -86,17 +80,9 @@ public class SecretEnvVar extends TemplateEnvVar {
         this.secretKey = secretKey;
     }
 
-    public Boolean getOptional() {
-        return optional;
-    }
-
-    public void setOptional(Boolean optional) {
-        this.optional = optional;
-    }
-
     @Override
     public String toString() {
-        return "SecretEnvVar [secretName=" + secretName + ", secretKey=" + secretKey + ", getKey()=" + getKey() + ", optional=" + String.valueOf(getOptional()) + "]";
+        return "SecretEnvVar [secretName=" + secretName + ", secretKey=" + secretKey + ", getKey()=" + getKey() + "]";
     }
 
     @Extension

@@ -24,8 +24,9 @@
 
 package org.csanchez.jenkins.plugins.kubernetes.volumes.workspace;
 
-import edu.umd.cs.findbugs.annotations.CheckForNull;
-import edu.umd.cs.findbugs.annotations.NonNull;
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
+
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
 
@@ -33,8 +34,6 @@ import hudson.Extension;
 import hudson.model.Descriptor;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
-
-import java.util.Objects;
 
 public class PersistentVolumeClaimWorkspaceVolume extends WorkspaceVolume {
     private String claimName;
@@ -51,13 +50,13 @@ public class PersistentVolumeClaimWorkspaceVolume extends WorkspaceVolume {
         return claimName;
     }
 
-    @NonNull
+    @Nonnull
     public Boolean getReadOnly() {
         return readOnly != null && readOnly;
     }
 
     @Override
-    public Volume buildVolume(String volumeName, String podName) {
+    public Volume buildVolume(String volumeName) {
         return new VolumeBuilder()
                 .withName(volumeName)
                 .withNewPersistentVolumeClaim()
@@ -65,20 +64,6 @@ public class PersistentVolumeClaimWorkspaceVolume extends WorkspaceVolume {
                     .withReadOnly(getReadOnly())
                 .and()
                 .build();
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        PersistentVolumeClaimWorkspaceVolume that = (PersistentVolumeClaimWorkspaceVolume) o;
-        return Objects.equals(claimName, that.claimName) &&
-                Objects.equals(readOnly, that.readOnly);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(claimName, readOnly);
     }
 
     @Extension

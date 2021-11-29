@@ -4,10 +4,9 @@
 /.factorypath
 /.settings/
 /work/
+
 /.idea/
 *.iml
 nbactions.xml
-nb-configuration.xml
 *.bak
 /.vscode/
-**/.DS_Store

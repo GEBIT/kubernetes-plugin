@@ -24,8 +24,9 @@
 
 package org.csanchez.jenkins.plugins.kubernetes.volumes.workspace;
 
-import edu.umd.cs.findbugs.annotations.CheckForNull;
-import edu.umd.cs.findbugs.annotations.NonNull;
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
+
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
 
@@ -33,8 +34,6 @@ import hudson.Extension;
 import hudson.model.Descriptor;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
-
-import java.util.Objects;
 
 public class EmptyDirWorkspaceVolume extends WorkspaceVolume {
 
@@ -53,13 +52,13 @@ public class EmptyDirWorkspaceVolume extends WorkspaceVolume {
         return getMemory() ? MEMORY_MEDIUM : DEFAULT_MEDIUM;
     }
 
-    @NonNull
+    @Nonnull
     public Boolean getMemory() {
         return memory != null && memory;
     }
 
     @Override
-    public Volume buildVolume(String volumeName, String podName) {
+    public Volume buildVolume(String volumeName) {
         return new VolumeBuilder().withName(volumeName).withNewEmptyDir().withMedium(getMedium()).endEmptyDir().build();
     }
 
@@ -68,24 +67,10 @@ public class EmptyDirWorkspaceVolume extends WorkspaceVolume {
         return "EmptyDirWorkspaceVolume [memory=" + memory + "]";
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        EmptyDirWorkspaceVolume that = (EmptyDirWorkspaceVolume) o;
-        return Objects.equals(memory, that.memory);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(memory);
-    }
-
     @Extension
     @Symbol("emptyDirWorkspaceVolume")
     public static class DescriptorImpl extends Descriptor<WorkspaceVolume> {
         @Override
-        @NonNull
         public String getDisplayName() {
             return "Empty Dir Workspace Volume";
         }

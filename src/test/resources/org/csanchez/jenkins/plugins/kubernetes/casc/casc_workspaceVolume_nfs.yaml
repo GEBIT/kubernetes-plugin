@@ -1,9 +1,0 @@
-jenkins:
-  clouds:
-    - kubernetes:
-        name: "kubernetes"
-        templates:
-          - workspaceVolume:
-              nfsWorkspaceVolume:
-                serverAddress: "serverAddress"
-                serverPath: "/path"

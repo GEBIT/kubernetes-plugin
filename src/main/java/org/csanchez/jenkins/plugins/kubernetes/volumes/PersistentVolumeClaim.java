@@ -24,8 +24,9 @@
 
 package org.csanchez.jenkins.plugins.kubernetes.volumes;
 
-import edu.umd.cs.findbugs.annotations.CheckForNull;
-import edu.umd.cs.findbugs.annotations.NonNull;
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
+
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
 
@@ -56,7 +57,7 @@ public class PersistentVolumeClaim extends PodVolume {
         return claimName;
     }
 
-    @NonNull
+    @Nonnull
     public Boolean getReadOnly() {
         return readOnly != null && readOnly;
     }

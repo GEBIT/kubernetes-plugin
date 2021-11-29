@@ -27,7 +27,6 @@ package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 import static org.junit.Assert.*;
 
 import org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud;
-import org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil;
 import org.csanchez.jenkins.plugins.kubernetes.Messages;
 import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
@@ -53,7 +52,7 @@ public class PodTemplateStepExecutionTest {
     }
 
     private String loadPipelineScript(String name) {
-        return KubernetesTestUtil.loadPipelineScript(getClass(), name);
+        return AbstractKubernetesPipelineTest.loadPipelineScript(getClass(), name);
     }
 
     @Test
@@ -63,7 +62,7 @@ public class PodTemplateStepExecutionTest {
         WorkflowRun b = p.scheduleBuild2(0).waitForStart();
         assertNotNull(b);
         r.assertBuildStatus(Result.FAILURE, r.waitForCompletion(b));
-        r.waitForMessage(Messages.RFC1123_error("badcontainerName_!"), b);
+        r.assertLogContains(Messages.RFC1123_error("badcontainerName_!"), b);
     }
 
     @Test
@@ -73,7 +72,17 @@ public class PodTemplateStepExecutionTest {
         WorkflowRun b = p.scheduleBuild2(0).waitForStart();
         assertNotNull(b);
         r.assertBuildStatus(Result.FAILURE, r.waitForCompletion(b));
-        r.waitForMessage(Messages.RFC1123_error("badcontainername_!, badcontainername2_!"), b);
+        r.assertLogContains(Messages.RFC1123_error("badcontainername_!, badcontainername2_!"), b);
+    }
+
+    @Test
+    public void testBadLabel() throws Exception {
+        WorkflowJob p = r.jenkins.createProject(WorkflowJob.class, "bad_label");
+        p.setDefinition(new CpsFlowDefinition(loadPipelineScript("badlabel.groovy"), true));
+        WorkflowRun b = p.scheduleBuild2(0).waitForStart();
+        assertNotNull(b);
+        r.assertBuildStatus(Result.FAILURE, r.waitForCompletion(b));
+        r.assertLogContains(Messages.label_error("mypod!123"), b);
     }
 
 }

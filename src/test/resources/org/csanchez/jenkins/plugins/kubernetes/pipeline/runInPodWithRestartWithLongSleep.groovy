@@ -1,10 +1,10 @@
 package org.csanchez.jenkins.plugins.kubernetes.pipeline
 
-podTemplate(containers: [
+podTemplate(label: 'runInPodWithRestartWithLongSleep', containers: [
         containerTemplate(name: 'busybox', image: 'busybox', ttyEnabled: true, command: '/bin/cat'),
 ]) {
 
-    node(POD_LABEL) {
+    node ('runInPodWithRestartWithLongSleep') {
         stage('Run') {
             container('busybox') {
                     sh 'for i in `seq 1 10`; do echo $i; sleep 5; done'

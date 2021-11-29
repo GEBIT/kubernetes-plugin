@@ -1,7 +1,8 @@
 pipeline {
   agent {
     kubernetes {
-      yaml '''
+      label 'declarativeFromYaml'
+      yaml """
 metadata:
   labels:
     some-label: some-label-value
@@ -28,7 +29,7 @@ spec:
     env:
     - name: CONTAINER_ENV_VAR
       value: busybox
-'''
+"""
     }
   }
   stages {

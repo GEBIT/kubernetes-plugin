@@ -1,9 +1,0 @@
-jenkins:
-  clouds:
-    - kubernetes:
-        name: "kubernetes"
-        templates:
-          - volumes:
-            - configMapVolume:
-                configMapName: my-configmap
-                mountPath: /mnt/path

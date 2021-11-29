@@ -24,8 +24,9 @@
 
 package org.csanchez.jenkins.plugins.kubernetes.volumes;
 
-import edu.umd.cs.findbugs.annotations.CheckForNull;
-import edu.umd.cs.findbugs.annotations.NonNull;
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
+
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
 
@@ -68,7 +69,7 @@ public class NfsVolume extends PodVolume {
         return serverPath;
     }
 
-    @NonNull
+    @Nonnull
     public Boolean getReadOnly() {
         return readOnly != null && readOnly;
     }
@@ -77,7 +78,6 @@ public class NfsVolume extends PodVolume {
     @Symbol("nfsVolume")
     public static class DescriptorImpl extends Descriptor<PodVolume> {
         @Override
-        @NonNull
         public String getDisplayName() {
             return "NFS Volume";
         }

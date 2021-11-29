@@ -1,36 +1,31 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
 import java.io.IOException;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.CertificateEncodingException;
 import java.util.HashSet;
-import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import edu.umd.cs.findbugs.annotations.CheckForNull;
-import edu.umd.cs.findbugs.annotations.NonNull;
-import hudson.FilePath;
-import hudson.Util;
-import hudson.slaves.SlaveComputer;
-import io.fabric8.kubernetes.api.model.Container;
-import io.fabric8.kubernetes.client.utils.Serialization;
-import jenkins.metrics.api.Metrics;
+import javax.annotation.Nonnull;
+
 import org.apache.commons.lang.RandomStringUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.Validate;
 import org.csanchez.jenkins.plugins.kubernetes.pod.retention.PodRetention;
 import org.jenkinsci.plugins.durabletask.executors.OnceRetentionStrategy;
-import org.jenkinsci.plugins.kubernetes.auth.KubernetesAuthException;
+import org.jvnet.localizer.Localizable;
 import org.jvnet.localizer.ResourceBundleHolder;
 import org.kohsuke.stapler.DataBoundConstructor;
 
 import hudson.Extension;
 import hudson.Launcher;
+import hudson.Util;
 import hudson.console.ModelHyperlinkNote;
 import hudson.model.Computer;
 import hudson.model.Descriptor;
@@ -45,14 +40,13 @@ import hudson.slaves.AbstractCloudSlave;
 import hudson.slaves.Cloud;
 import hudson.slaves.CloudRetentionStrategy;
 import hudson.slaves.ComputerLauncher;
+import hudson.slaves.OfflineCause;
 import hudson.slaves.RetentionStrategy;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import jenkins.model.Jenkins;
 import jenkins.security.MasterToSlaveCallable;
-
-import static org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud.JNLP_NAME;
 
 /**
  * @author Carlos Sanchez carlos@apache.org
@@ -74,34 +68,11 @@ public class KubernetesSlave extends AbstractCloudSlave {
 
     private final String cloudName;
     private String namespace;
-    @NonNull
-    private String podTemplateId;
-    private transient PodTemplate template;
+    private final PodTemplate template;
     private transient Set<Queue.Executable> executables = new HashSet<>();
 
-    @CheckForNull
-    private transient Pod pod;
-
-    @NonNull
+    @Nonnull
     public PodTemplate getTemplate() {
-        // Look up updated pod template after a restart
-        PodTemplate template = getTemplateOrNull();
-        if (template == null) {
-            throw new IllegalStateException("Unable to resolve pod template from id=" + podTemplateId);
-        }
-        return template;
-    }
-
-    @NonNull
-    public String getTemplateId() {
-        return podTemplateId;
-    }
-
-    @CheckForNull
-    public PodTemplate getTemplateOrNull() {
-        if (template == null) {
-            template = getKubernetesCloud().getTemplateById(podTemplateId);
-        }
         return template;
     }
 
@@ -145,30 +116,32 @@ public class KubernetesSlave extends AbstractCloudSlave {
         this(getSlaveName(template), template, nodeDescription, cloudName, labelStr, new KubernetesLauncher(), rs);
     }
 
-    protected KubernetesSlave(String name, @NonNull PodTemplate template, String nodeDescription, String cloudName, String labelStr,
+    protected KubernetesSlave(String name, @Nonnull PodTemplate template, String nodeDescription, String cloudName, String labelStr,
                            ComputerLauncher computerLauncher, RetentionStrategy rs)
             throws Descriptor.FormException, IOException {
-        super(name, null, computerLauncher);
-        setNodeDescription(nodeDescription);
-        setNumExecutors(1);
-        setMode(template.getNodeUsageMode() != null ? template.getNodeUsageMode() : Node.Mode.NORMAL);
-        setLabelString(labelStr);
-        setRetentionStrategy(rs);
-        setNodeProperties(template.getNodeProperties());
+        super(name,
+                nodeDescription,
+                template.getRemoteFs(),
+                1,
+                template.getNodeUsageMode() != null ? template.getNodeUsageMode() : Node.Mode.NORMAL,
+                labelStr == null ? null : labelStr,
+                computerLauncher,
+                rs,
+                template.getNodeProperties());
+
         this.cloudName = cloudName;
         this.template = template;
-        this.podTemplateId = template.getId();
     }
 
     public String getCloudName() {
         return cloudName;
     }
 
-    public void setNamespace(@NonNull String namespace) {
+    public void setNamespace(@Nonnull String namespace) {
         this.namespace = namespace;
     }
 
-    @NonNull
+    @Nonnull
     public String getNamespace() {
         return namespace;
     }
@@ -177,36 +150,8 @@ public class KubernetesSlave extends AbstractCloudSlave {
         return PodTemplateUtils.substituteEnv(getNodeName());
     }
 
-    private String remoteFS;
-
-    @Override
-    public String getRemoteFS() {
-        if (remoteFS == null) {
-            Optional<Pod> optionalPod = getPod();
-            if (optionalPod.isPresent()) {
-                Optional<Container> optionalJnlp = optionalPod.get().getSpec().getContainers().stream().filter(c -> JNLP_NAME.equals(c.getName())).findFirst();
-                if (optionalJnlp.isPresent()) {
-                    remoteFS = StringUtils.defaultIfBlank(optionalJnlp.get().getWorkingDir(), ContainerTemplate.DEFAULT_WORKING_DIR);
-                }
-            }
-        }
-        return Util.fixNull(remoteFS);
-    }
-
-    // Copied from Slave#getRootPath because this uses the underlying field
-    @CheckForNull
-    @Override
-    public FilePath getRootPath() {
-        final SlaveComputer computer = getComputer();
-        if (computer == null) {
-            // if computer is null then channel is null and thus we were going to return null anyway
-            return null;
-        } else {
-            return createPath(StringUtils.defaultString(computer.getAbsoluteRemoteFs(), getRemoteFS()));
-        }
-    }
-
     /**
+
      * @deprecated Please use the strongly typed getKubernetesCloud() instead.
      */
     @Deprecated
@@ -214,16 +159,12 @@ public class KubernetesSlave extends AbstractCloudSlave {
         return Jenkins.getInstance().getCloud(getCloudName());
     }
 
-    public Optional<Pod> getPod() {
-        return pod == null ? Optional.empty() : Optional.of(pod);
-    }
-
     /**
      * Returns the cloud instance which created this agent.
      * @return the cloud instance which created this agent.
      * @throws IllegalStateException if the cloud doesn't exist anymore, or is not a {@link KubernetesCloud}.
      */
-    @NonNull
+    @Nonnull
     public KubernetesCloud getKubernetesCloud() {
         return getKubernetesCloud(getCloudName());
     }
@@ -247,11 +188,7 @@ public class KubernetesSlave extends AbstractCloudSlave {
         name = name.replaceAll("[ _]", "-").toLowerCase();
         // keep it under 63 chars (62 is used to account for the '-')
         name = name.substring(0, Math.min(name.length(), 62 - randString.length()));
-        String slaveName = String.format("%s-%s", name, randString);
-        if (!slaveName.matches("[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")) {
-            return String.format("%s-%s", DEFAULT_AGENT_PREFIX, randString);
-        }
-        return slaveName;
+        return String.format("%s-%s", name, randString);
     }
 
     @Override
@@ -261,7 +198,6 @@ public class KubernetesSlave extends AbstractCloudSlave {
 
     public PodRetention getPodRetention(KubernetesCloud cloud) {
         PodRetention retentionPolicy = cloud.getPodRetention();
-        PodTemplate template = getTemplateOrNull();
         if (template != null) {
             PodRetention pr = template.getPodRetention();
             // https://issues.jenkins-ci.org/browse/JENKINS-53260
@@ -295,7 +231,8 @@ public class KubernetesSlave extends AbstractCloudSlave {
         KubernetesClient client;
         try {
             client = cloud.connect();
-        } catch (KubernetesAuthException | IOException e) {
+        } catch (UnrecoverableKeyException | CertificateEncodingException | NoSuchAlgorithmException
+                | KeyStoreException e) {
             String msg = String.format("Failed to connect to cloud %s. There may be leftover resources on the Kubernetes cluster.", getCloudName());
             e.printStackTrace(listener.fatalError(msg));
             LOGGER.log(Level.SEVERE, msg);
@@ -319,13 +256,19 @@ public class KubernetesSlave extends AbstractCloudSlave {
         // Tell the slave to stop JNLP reconnects.
         VirtualChannel ch = computer.getChannel();
         if (ch != null) {
-            Future<Void> disconnectorFuture = ch.callAsync(new SlaveDisconnector());
-            try {
-                disconnectorFuture.get(DISCONNECTION_TIMEOUT, TimeUnit.SECONDS);
-            } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                String msg = String.format("Ignoring error sending order to not reconnect agent %s: %s", name, e.getMessage());
-                LOGGER.log(Level.INFO, msg, e);
-            }
+            ch.call(new SlaveDisconnector());
+        }
+
+        // Disconnect the master from the slave agent
+        OfflineCause offlineCause = OfflineCause.create(new Localizable(HOLDER, "offline"));
+
+        Future<?> disconnected = computer.disconnect(offlineCause);
+        // wait a bit for disconnection to avoid stack traces in logs
+        try {
+            disconnected.get(DISCONNECTION_TIMEOUT, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            String msg = String.format("Ignoring error waiting for agent disconnection %s: %s", name, e.getMessage());
+            LOGGER.log(Level.INFO, msg, e);
         }
 
         if (getCloudName() == null) {
@@ -337,10 +280,9 @@ public class KubernetesSlave extends AbstractCloudSlave {
 
         if (deletePod) {
             deleteSlavePod(listener, client);
-            Metrics.metricRegistry().counter(MetricNames.PODS_TERMINATED).inc();
         } else {
-            // Log warning, as the agent pod may still be running
-            LOGGER.log(Level.WARNING, "Agent pod {0} was not deleted due to retention policy {1}.",
+            // Log warning, as the slave pod may still be running
+            LOGGER.log(Level.WARNING, "Slave pod {0} was not deleted due to retention policy {1}.",
                     new Object[] { name, getPodRetention(cloud) });
         }
         String msg = String.format("Disconnected computer %s", name);
@@ -350,9 +292,7 @@ public class KubernetesSlave extends AbstractCloudSlave {
 
     private void deleteSlavePod(TaskListener listener, KubernetesClient client) throws IOException {
         try {
-            Boolean deleted = client.pods().inNamespace(getNamespace()).withName(name).
-                cascading(true). // TODO JENKINS-58306 pending https://github.com/fabric8io/kubernetes-client/pull/1620
-                delete();
+            Boolean deleted = client.pods().inNamespace(getNamespace()).withName(name).delete();
             if (!Boolean.TRUE.equals(deleted)) {
                 String msg = String.format("Failed to delete pod for agent %s/%s: not found", getNamespace(), name);
                 LOGGER.log(Level.WARNING, msg);
@@ -382,18 +322,23 @@ public class KubernetesSlave extends AbstractCloudSlave {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         if (!super.equals(o)) return false;
+
         KubernetesSlave that = (KubernetesSlave) o;
-        return cloudName.equals(that.cloudName);
+
+        if (cloudName != null ? !cloudName.equals(that.cloudName) : that.cloudName != null) return false;
+        return template != null ? template.equals(that.template) : that.template == null;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(super.hashCode(), cloudName);
+        int result = super.hashCode();
+        result = 31 * result + (cloudName != null ? cloudName.hashCode() : 0);
+        result = 31 * result + (template != null ? template.hashCode() : 0);
+        return result;
     }
 
     @Override
     public Launcher createLauncher(TaskListener listener) {
-        Launcher launcher = super.createLauncher(listener);
         if (template != null) {
             Executor executor = Executor.currentExecutor();
             if (executor != null) {
@@ -401,48 +346,13 @@ public class KubernetesSlave extends AbstractCloudSlave {
                 if (currentExecutable != null && executables.add(currentExecutable)) {
                     listener.getLogger().println(Messages.KubernetesSlave_AgentIsProvisionedFromTemplate(
                             ModelHyperlinkNote.encodeTo("/computer/" + getNodeName(), getNodeName()),
-                            getTemplate().getName())
+                            getTemplate().getDisplayName())
                     );
-                    printAgentDescription(listener);
-                    checkHomeAndWarnIfNeeded(listener);
+                    listener.getLogger().println(getTemplate().getDescriptionForLogging());
                 }
             }
         }
-        return launcher;
-    }
-
-    void assignPod(@CheckForNull Pod pod) {
-        this.pod = pod;
-    }
-
-    private void printAgentDescription(TaskListener listener) {
-        if (pod != null && template.isShowRawYaml()) {
-            listener.getLogger().println(podAsYaml());
-        }
-    }
-
-    private String podAsYaml() {
-        String x = Serialization.asYaml(pod);
-        Computer computer = toComputer();
-        if (computer instanceof SlaveComputer) {
-            SlaveComputer sc = (SlaveComputer) computer;
-            return x.replaceAll(sc.getJnlpMac(),"********");
-        }
-        return x;
-    }
-
-    private void checkHomeAndWarnIfNeeded(TaskListener listener) {
-        try {
-            Computer computer = toComputer();
-            if (computer != null) {
-                String home = computer.getEnvironment().get("HOME");
-                if ("/".equals(home)) {
-                    listener.getLogger().println(Messages.KubernetesSlave_HomeWarning());
-                }
-            }
-        } catch (IOException|InterruptedException e) {
-            e.printStackTrace(listener.error("[WARNING] Unable to retrieve HOME environment variable"));
-        }
+        return super.createLauncher(listener);
     }
 
     protected Object readResolve() {
@@ -556,16 +466,9 @@ public class KubernetesSlave extends AbstractCloudSlave {
                     nodeDescription == null ? podTemplate.getName() : nodeDescription,
                     cloud.name,
                     label == null ? podTemplate.getLabel() : label,
-                    computerLauncher == null ? defaultLauncher() : computerLauncher,
+                    computerLauncher == null ? new KubernetesLauncher(cloud.getJenkinsTunnel(), null) : computerLauncher,
                     retentionStrategy == null ? determineRetentionStrategy() : retentionStrategy);
         }
-
-        private KubernetesLauncher defaultLauncher() {
-            KubernetesLauncher launcher = new KubernetesLauncher(cloud.getJenkinsTunnel(), null);
-            launcher.setWebSocket(cloud.isWebSocket());
-            return launcher;
-        }
-
     }
 
 
@@ -597,9 +500,9 @@ public class KubernetesSlave extends AbstractCloudSlave {
             if (e == null) {
                 return null;
             }
-            // Tell the JNLP agent to not attempt further reconnects.
+            // Tell the slave JNLP agent to not attempt further reconnects.
             e.setNoReconnect(true);
-            LOGGER.log(Level.INFO, "Disabled agent engine reconnects.");
+            LOGGER.log(Level.INFO, "Disabled slave engine reconnects.");
             return null;
         }
 

@@ -16,6 +16,7 @@
 
 package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 
+import com.google.common.collect.ImmutableSet;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.model.Node;
@@ -28,9 +29,6 @@ import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 
 import java.io.Serializable;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.Set;
 
 public class ContainerLogStep extends Step implements Serializable {
@@ -106,13 +104,18 @@ public class ContainerLogStep extends Step implements Serializable {
         }
 
         @Override
+        public boolean takesImplicitBlockArgument() {
+            return false;
+        }
+
+        @Override
         public boolean isAdvanced() {
-            return true;
+            return false;
         }
 
         @Override
         public Set<? extends Class<?>> getRequiredContext() {
-            return Collections.unmodifiableSet(new HashSet<>(Arrays.asList(Node.class, FilePath.class, TaskListener.class)));
+            return ImmutableSet.of(Node.class, FilePath.class, TaskListener.class);
         }
     }
 }
