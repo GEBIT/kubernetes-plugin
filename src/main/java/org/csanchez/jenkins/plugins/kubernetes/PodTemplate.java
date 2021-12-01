@@ -150,8 +150,8 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
 
     private Boolean hostNetwork;
 
-    private WorkspaceVolume workspaceVolume = WorkspaceVolume.getDefault();
-    
+    private WorkspaceVolume workspaceVolume;
+
     private boolean mountWorkspace = true;
 
     private final List<PodVolume> volumes = new ArrayList<>();

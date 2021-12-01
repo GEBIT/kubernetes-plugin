@@ -305,7 +305,7 @@ public class KubernetesDeclarativeAgent extends DeclarativeAgent<KubernetesDecla
     }
 
     public boolean getMountWorkspace() {
-        return mountWorkspace;
+        return mountWorkspace == null ? true : mountWorkspace;
     }
 
     @DataBoundSetter

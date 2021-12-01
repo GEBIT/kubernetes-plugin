@@ -96,6 +96,11 @@ public class PodTemplateBuilder {
     private static final Pattern SPLIT_IN_SPACES = Pattern.compile("([^\"]\\S*|\".+?\")\\s*");
 
     public static final String WORKSPACE_VOLUME_NAME = "workspace-volume";
+    private static final VolumeMount DEFAULT_WORKSPACE_VOLUME_MOUNT = new VolumeMountBuilder()
+            .withName(WORKSPACE_VOLUME_NAME)
+            .withReadOnly(false)
+            .build();
+
 
     @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "tests")
     @Restricted(NoExternalUse.class)
@@ -320,6 +325,24 @@ public class PodTemplateBuilder {
             jnlp.setResources(reqs);
 
         }
+
+        if (template.getMountWorkspace()) {
+            // moved this from DefaultWorkspaceVolume decorator to here, so mountWorkspace can be checked
+            // default workspace volume mount. If something is already mounted in the same path ignore it
+            pod.getSpec().getContainers().stream()
+                    .filter(c -> c.getVolumeMounts().stream()
+                            .noneMatch(vm -> vm.getMountPath().equals(
+                                    getWorkspaceMountPath(c))))
+                    .forEach(c -> {
+                        List<VolumeMount> mounts = c.getVolumeMounts() == null ? new ArrayList<>() : c.getVolumeMounts();
+                        mounts.add(new VolumeMountBuilder(DEFAULT_WORKSPACE_VOLUME_MOUNT)
+                                .withMountPath(getWorkspaceMountPath(c))
+                                .build()
+                        );
+                        c.setVolumeMounts(mounts);
+                    });
+        }
+
         if (cloud != null) {
             pod = PodDecorator.decorateAll(cloud, pod);
         }
@@ -328,6 +351,14 @@ public class PodTemplateBuilder {
         return pod;
     }
 
+    private String getWorkspaceMountPath(Container c) {
+        String workingDir = c.getWorkingDir();
+        if (workingDir == null) {
+            workingDir = ContainerTemplate.DEFAULT_WORKING_DIR;
+        }
+        return workingDir + "/" + ContainerTemplate.WORKSPACE_DIR_NAME;
+    }
+    
     private String normalizePath(String np) {
         //We need to normalize the path or we can end up in really hard to debug issues.
         return substituteEnv(Paths.get(np).normalize().toString().replace("\\", "/"));
@@ -448,8 +479,7 @@ public class PodTemplateBuilder {
 
         ContainerPort[] ports = containerTemplate.getPorts().stream().map(entry -> entry.toPort()).toArray(size -> new ContainerPort[size]);
 
-
-        List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, workingDir, mountWorkspace);
+        List<VolumeMount> containerMounts = new ArrayList<>(volumeMounts);
 
         ContainerLivenessProbe clp = containerTemplate.getLivenessProbe();
         Probe livenessProbe = null;
@@ -489,24 +519,6 @@ public class PodTemplateBuilder {
                 .withLimits(getResourcesMap(containerTemplate.getResourceLimitMemory(), containerTemplate.getResourceLimitCpu(), containerTemplate.getResourceLimitEphemeralStorage()))
                 .endResources()
                 .build();
-    }
-
-    private VolumeMount getDefaultVolumeMount(@CheckForNull String workingDir) {
-        String wd = workingDir;
-        if (wd == null) {
-            wd = ContainerTemplate.DEFAULT_WORKING_DIR;
-            LOGGER.log(Level.FINE, "Container workingDir is null, defaulting to {0}", wd);
-        }
-        return new VolumeMountBuilder().withMountPath(
-                wd + "/" + ContainerTemplate.WORKSPACE_DIR_NAME).withName(WORKSPACE_VOLUME_NAME).withReadOnly(false).build();
-    }
-
-    private List<VolumeMount> getContainerVolumeMounts(Collection<VolumeMount> volumeMounts, String workingDir, boolean mountWorkspace) {
-        List<VolumeMount> containerMounts = new ArrayList<>(volumeMounts);
-        if (!isNullOrEmpty(workingDir) && !PodVolume.volumeMountExists(workingDir, volumeMounts) && mountWorkspace) {
-            containerMounts.add(getDefaultVolumeMount(workingDir));
-        }
-        return containerMounts;
     }
 
     /**

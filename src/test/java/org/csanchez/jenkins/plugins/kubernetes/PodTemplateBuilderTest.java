@@ -198,7 +198,7 @@ public class PodTemplateBuilderTest {
         Container container1 = containers.get(1);
 
         List<VolumeMount> volumeMounts = Collections.singletonList(new VolumeMountBuilder()
-                .withMountPath("/home/jenkins/agent").withName("workspace-volume").withReadOnly(false).build());
+                .withMountPath("/home/jenkins/agent/workspace").withName("workspace-volume").withReadOnly(false).build());
 
         assertEquals(volumeMounts, container0.getVolumeMounts());
         assertEquals(volumeMounts, container1.getVolumeMounts());
@@ -220,7 +220,7 @@ public class PodTemplateBuilderTest {
         Container container0 = containers.get(0);
         Container container1 = containers.get(1);
         List<VolumeMount> volumeMounts = Collections.singletonList(new VolumeMountBuilder()
-                .withMountPath("/home/jenkins/agent").withName("workspace-volume").withReadOnly(false).build());
+                .withMountPath("/home/jenkins/agent/workspace").withName("workspace-volume").withReadOnly(false).build());
 
         assertEquals(volumeMounts, container0.getVolumeMounts());
         assertEquals(volumeMounts, container1.getVolumeMounts());
@@ -312,7 +312,7 @@ public class PodTemplateBuilderTest {
         List<VolumeMount> mounts = containers.get("busybox").getVolumeMounts();
         List<VolumeMount> jnlpMounts = containers.get("jnlp").getVolumeMounts();
         VolumeMount workspaceVolume = new VolumeMountBuilder() //
-                .withMountPath("/home/jenkins/agent").withName("workspace-volume").withReadOnly(false).build();
+                .withMountPath("/home/jenkins/agent/workspace").withName("workspace-volume").withReadOnly(false).build();
 
         // when using yaml we don't mount all volumes, just the ones explicitly listed
         if (fromYaml) {
