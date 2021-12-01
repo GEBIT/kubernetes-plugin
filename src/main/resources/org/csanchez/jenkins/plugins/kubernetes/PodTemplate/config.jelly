@@ -51,7 +51,7 @@
     </f:entry>
 
     <f:entry field="instanceCapStr" title="${%Concurrency Limit}">
-      <f:textbox default="-1" />
+      <f:textbox default="" />
     </f:entry>
 
     <f:dropdownDescriptorSelector title="${%Pod Retention}" field="podRetention" default="${descriptor.defaultPodRetention}" />
