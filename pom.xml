@@ -9,7 +9,7 @@
 
   <groupId>org.csanchez.jenkins.plugins</groupId>
   <artifactId>kubernetes</artifactId>
-  <version>1.30.11-gebit1-SNAPSHOT</version>
+  <version>1.30.11-gebit1</version>
   <name>Kubernetes plugin</name>
   <description>Jenkins plugin to run dynamic agents in a Kubernetes cluster</description>
   <packaging>hpi</packaging>
@@ -19,7 +19,7 @@
     <connection>scm:git:git@github.com:GEBIT/kubernetes-plugin.git</connection>
     <developerConnection>scm:git:git@github.com:GEBIT/kubernetes-plugin.git</developerConnection>
     <url>https://github.com/GEBIT/kubernetes-plugin</url>
-    <tag>gebit</tag>
+    <tag>kubernetes-1.30.11-gebit1</tag>
   </scm>
 
   <licenses>
