@@ -197,6 +197,10 @@ public final class KubernetesProvisioningLimits {
             // prepare http call to bc-limit webhook
             URL url = new URL(BC_LIMIT_URL);
             HttpURLConnection con = (HttpURLConnection) url.openConnection();
+            // reduce timeouts so Jenkins doesn't give up on the provisioning attempt
+            // if it takes too long
+            con.setConnectTimeout(1000);
+            con.setReadTimeout(1000);
             con.setRequestMethod("POST");
             con.setRequestProperty("Content-Type", "application/json; utf-8");
             con.setRequestProperty("Accept", "application/json");
