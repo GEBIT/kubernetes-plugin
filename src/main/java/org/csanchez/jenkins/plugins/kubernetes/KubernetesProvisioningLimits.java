@@ -142,47 +142,45 @@ public final class KubernetesProvisioningLimits {
     }
 
     /**
-     * Construct a minimal pod definition, containing the resource requests from the pod template.
+     * Check the pod for valid resource requests.
      * 
-     * @param podTemplate The podTemplate to construct a pod from.
-     * 
-     * @return The minimal pod definition needed for resource checking. This is NOT a full pod
-     * definition as accepted by the k8s-apiserver, but contains enough information for the bc-limit
-     * webhook to make its decision.
+     * @param pod The pod to check.
+     *
+     * @throws IllegalArgumentException if a resource request is not parseable or
+     *                                  if a resource request is 0 in total over all containers.
      */
-    private Pod constructResourceCheckingPod(@NonNull PodTemplate podTemplate) {
-        // create containers to hold resource request information
-        List<Container> containers = new ArrayList<>();
-        // go over all containers of the template
-        for (ContainerTemplate containerTemplate : podTemplate.getContainers()) {
-            // create needed builders
-            ContainerBuilder conBuilder = new ContainerBuilder();
-            ResourceRequirementsBuilder resBuilder = new ResourceRequirementsBuilder();
-
-            // put resource request info from container template into container
-            Map<String, Quantity> resourceRequests = new HashMap<>();
-            resourceRequests.put("cpu", new Quantity(containerTemplate.getResourceRequestCpu()));
-            resourceRequests.put("memory", new Quantity(containerTemplate.getResourceRequestMemory()));
-            ResourceRequirements reqs = resBuilder.withRequests(resourceRequests).build();
-            containers.add(conBuilder.withName(containerTemplate.getName()).withResources(reqs).build());
+    private void checkPodResourceReqs(@NonNull Pod pod) {
+        Double cpuReq = 0.0;
+        Double memReq = 0.0;
+        for (Container containerTemplate : pod.getSpec().getContainers()) {
+            Quantity cpuReqQ = containerTemplate.getResources().getRequests().get("cpu");
+            Quantity memReqQ = containerTemplate.getResources().getRequests().get("memory");
+            cpuReq += Double.parseDouble(cpuReqQ.getAmount());
+            memReq += Double.parseDouble(memReqQ.getAmount());
         }
-        // add default jenkins slave label to pod, so the bc-limit webhook recognizes it
-        Map<String, String> labels = new HashMap<>();
-        labels.put("jenkins", "slave");
-        PodBuilder builder = new PodBuilder();
-        return builder.
-            withNewMetadata().
-                withLabels(labels).
-            endMetadata().
-            withNewSpec().
-                withContainers(containers).
-            endSpec().build();
+        if (cpuReq == 0.0) {
+            throw new IllegalArgumentException("NULL_CPU_REQUEST");
+        }
+        if (memReq == 0.0) {
+            throw new IllegalArgumentException("NULL_MEM_REQUEST");
+        }
     }
-    
+
     private boolean admitPod(@NonNull PodTemplate podTemplate) {
         LOGGER.log(Level.INFO, () -> "checking pod admittance for template: " + podTemplate.getName());
 
-        Pod pod = constructResourceCheckingPod(podTemplate);
+        final Pod pod;
+        try {
+            // use the PodTemplateBuilder without a node to get a template combined with its parents
+            PodTemplateBuilder builder = new PodTemplateBuilder(podTemplate);
+            pod = builder.build();
+            LOGGER.log(Level.FINEST, () -> "built slavePod with PodTemplateBuilder for resource request checking:\n" + pod.toString());
+
+            checkPodResourceReqs(pod);
+        } catch (IllegalArgumentException e) {
+            LOGGER.log(Level.WARNING, () -> "failed to parse valid resource request from podTemplate:\n" + e.getMessage() + "\n" + podTemplate.toString());
+            return false;
+        }
         LOGGER.log(Level.FINEST, () -> "constructed resource checking pod: " + pod);
 
         // package pod into an AdmissionReview
@@ -269,5 +267,4 @@ public final class KubernetesProvisioningLimits {
             }
         }
     }
-
 }
