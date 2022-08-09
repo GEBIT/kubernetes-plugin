@@ -28,7 +28,6 @@ import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -45,6 +44,7 @@ import java.util.regex.Matcher;
 
 import hudson.AbortException;
 import io.fabric8.kubernetes.api.model.Container;
+import io.fabric8.kubernetes.client.http.WebSocketHandshakeException;
 import org.apache.commons.io.output.TeeOutputStream;
 import org.csanchez.jenkins.plugins.kubernetes.ContainerTemplate;
 import org.csanchez.jenkins.plugins.kubernetes.KubernetesSlave;
@@ -63,7 +63,6 @@ import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.ExecListener;
 import io.fabric8.kubernetes.client.dsl.ExecWatch;
 import io.fabric8.kubernetes.client.dsl.Execable;
-import okhttp3.Response;
 
 import static org.csanchez.jenkins.plugins.kubernetes.pipeline.Constants.EXIT;
 
@@ -75,15 +74,22 @@ import static org.csanchez.jenkins.plugins.kubernetes.pipeline.Constants.EXIT;
 public class ContainerExecDecorator extends LauncherDecorator implements Serializable, Closeable {
 
     private static final long serialVersionUID = 4419929753433397655L;
-    private static final long DEFAULT_CONTAINER_READY_TIMEOUT = 5;
-    private static final String CONTAINER_READY_TIMEOUT_SYSTEM_PROPERTY = ContainerExecDecorator.class.getName() + ".containerReadyTimeout";
 
+    private static final String WEBSOCKET_CONNECTION_MAX_RETRY_SYSTEM_PROPERTY = ContainerExecDecorator.class.getName()
+        + ".websocketConnectionMaxRetries";
+    private static final String WEBSOCKET_CONNECTION_MAX_RETRY_BACKOFF_SYSTEM_PROPERTY = ContainerExecDecorator.class.getName()
+        + ".websocketConnectionMaxRetryBackoff";
     private static final String WEBSOCKET_CONNECTION_TIMEOUT_SYSTEM_PROPERTY = ContainerExecDecorator.class.getName()
             + ".websocketConnectionTimeout";
     /** time to wait in seconds for websocket to connect */
     private static final int WEBSOCKET_CONNECTION_TIMEOUT = Integer
             .getInteger(WEBSOCKET_CONNECTION_TIMEOUT_SYSTEM_PROPERTY, 30);
-    private static final long CONTAINER_READY_TIMEOUT = containerReadyTimeout();
+    /** maximum number of times to retry failed websocket connection */
+    private static final int WEBSOCKET_CONNECTION_MAX_RETRY = Integer
+        .getInteger(WEBSOCKET_CONNECTION_MAX_RETRY_SYSTEM_PROPERTY, 5);
+    /** maximum backoff time for retrying failed websocket connection  */
+    private static final int WEBSOCKET_CONNECTION_MAX_RETRY_BACKOFF = Integer
+        .getInteger(WEBSOCKET_CONNECTION_MAX_RETRY_BACKOFF_SYSTEM_PROPERTY, 30);
     private static final String COOKIE_VAR = "JENKINS_SERVER_COOKIE";
 
     private static final Logger LOGGER = Logger.getLogger(ContainerExecDecorator.class.getName());
@@ -104,9 +110,6 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
     private String containerName;
     private EnvironmentExpander environmentExpander;
     private EnvVars globalVars;
-    /** @deprecated no longer used */
-    @Deprecated
-    private FilePath ws;
     private EnvVars rcEnvVars;
     private String shell;
     private KubernetesNodeContext nodeContext;
@@ -118,7 +121,6 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
     public ContainerExecDecorator(KubernetesClient client, String podName, String containerName, String namespace, EnvironmentExpander environmentExpander, FilePath ws) {
         this.containerName = containerName;
         this.environmentExpander = environmentExpander;
-        this.ws = ws;
     }
 
     @Deprecated
@@ -222,16 +224,6 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
         return this.rcEnvVars;
     }
 
-    /** @deprecated unused */
-    @Deprecated
-    public FilePath getWs() {
-        return ws;
-    }
-
-    public void setWs(FilePath ws) {
-        this.ws = ws;
-    }
-
     public void setShell(String shell) {
         this.shell = shell;
     }
@@ -246,6 +238,12 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
 
     @Override
     public Launcher decorate(final Launcher launcher, final Node node) {
+
+        //Allows other nodes to be provisioned inside the container clause
+        //If the node is not a KubernetesSlave return the original launcher
+        if(node != null && !(node instanceof KubernetesSlave)) {
+           return launcher;
+        }
         return new Launcher.DecoratedLauncher(launcher) {
             @Override
             public Proc launch(ProcStarter starter) throws IOException {
@@ -341,10 +339,6 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
 
             private Proc doLaunch(boolean quiet, String[] cmdEnvs, OutputStream outputForCaller, FilePath pwd,
                     boolean[] masks, String... commands) throws IOException {
-                final CountDownLatch started = new CountDownLatch(1);
-                final CountDownLatch finished = new CountDownLatch(1);
-                final AtomicBoolean alive = new AtomicBoolean(false);
-                final AtomicLong startAlive = new AtomicLong();
                 long startMethod = System.nanoTime();
 
                 PrintStream printStream;
@@ -352,6 +346,7 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
 
                 // Only output to stdout at the beginning for diagnostics.
                 ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+                // Wrap stdout so that we can toggle it off.
                 ToggleOutputStream toggleStdout = new ToggleOutputStream(stdout);
 
                 // Do not send this command to the output when in quiet mode
@@ -363,14 +358,27 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
                     stream = new TeeOutputStream(toggleStdout, printStream);
                 }
 
+                ByteArrayOutputStream dryRunCaller = null;;
+                ToggleOutputStream toggleDryRunCaller = null;
+                ToggleOutputStream toggleOutputForCaller = null;
                 // Send to proc caller as well if they sent one
                 if (outputForCaller != null && !outputForCaller.equals(printStream)) {
-                    stream = new TeeOutputStream(outputForCaller, stream);
+                    if (launcher.isUnix()) {
+                        stream = new TeeOutputStream(outputForCaller, stream);
+                    } else {
+                        // Prepare to capture output for later.
+                        dryRunCaller = new ByteArrayOutputStream();
+                        toggleDryRunCaller = new ToggleOutputStream(dryRunCaller);
+                        // Initially disable the output for the caller, to prevent it from getting unwanted output such as prompt
+                        toggleOutputForCaller = new ToggleOutputStream(outputForCaller, true);
+                        stream = new TeeOutputStream(toggleOutputForCaller, stream);
+                        stream = new TeeOutputStream(toggleDryRunCaller, stream);
+                    }
                 }
                 ByteArrayOutputStream error = new ByteArrayOutputStream();
 
-                String sh = shell != null ? shell : launcher.isUnix() ? "sh" : "cmd";
-                String msg = "Executing " + sh + " script inside container " + containerName + " of pod " + getPodName();
+                String[] sh = shell != null ? new String[]{shell} : launcher.isUnix() ? new String[] {"sh"} : new String[] {"cmd", "/Q"};
+                String msg = "Executing " + String.join(" ", sh) + " script inside container " + containerName + " of pod " + getPodName();
                 LOGGER.log(Level.FINEST, msg);
                 printStream.println(msg);
 
@@ -378,78 +386,115 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
                     closables = new ArrayList<>();
                 }
 
-                Execable<String, ExecWatch> execable = getClient().pods().inNamespace(getNamespace()).withName(getPodName()).inContainer(containerName) //
-                        .redirectingInput(STDIN_BUFFER_SIZE) // JENKINS-50429
-                        .writingOutput(stream).writingError(stream).writingErrorChannel(error)
-                        .usingListener(new ExecListener() {
-                            @Override
-                            public void onOpen(Response response) {
-                                alive.set(true);
-                                started.countDown();
-                                startAlive.set(System.nanoTime());
-                                LOGGER.log(Level.FINEST, "onOpen : {0}", finished);
-                            }
+                int attempts = 0;
+                ExecWatchWrapper watchWrapper = null;
+                while (watchWrapper == null && attempts < WEBSOCKET_CONNECTION_MAX_RETRY) {
 
-                            @Override
-                            public void onFailure(Throwable t, Response response) {
-                                alive.set(false);
-                                t.printStackTrace(launcher.getListener().getLogger());
-                                started.countDown();
-                                LOGGER.log(Level.FINEST, "onFailure : {0}", finished);
-                                if (finished.getCount() == 0) {
-                                    LOGGER.log(Level.WARNING,
-                                            "onFailure called but latch already finished. This may be a bug in the kubernetes-plugin");
-                                }
-                                finished.countDown();
-                            }
-
-                            @Override
-                            public void onClose(int i, String s) {
-                                alive.set(false);
-                                started.countDown();
-                                LOGGER.log(Level.FINEST, "onClose : {0} [{1} ms]", new Object[]{finished, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startAlive.get())});
-                                if (finished.getCount() == 0) {
-                                    LOGGER.log(Level.WARNING,
-                                            "onClose called but latch already finished. This indicates a bug in the kubernetes-plugin");
-                                }
-                                finished.countDown();
-                            }
-                        });
-
-                ExecWatch watch;
-                try {
-                    watch = execable.exec(sh);
-                } catch (KubernetesClientException e) {
-                    if (e.getCause() instanceof InterruptedException) {
-                        throw new IOException(
-                                "Interrupted while starting websocket connection, you should increase the Max connections to Kubernetes API",
-                                e);
-                    } else {
-                        throw e;
+                    if (attempts > 0) {
+                        // Exponential backoff: Waits 2s, next attempt 4s, next attempts 8s, next attempts 16s, ...
+                        // with a maximum of wait of WEBSOCKET_CONNECTION_MAX_RETRY_BACKOFF
+                        long backoffInSeconds = Math.min(Integer.toUnsignedLong((int) Math.pow(2, attempts)), WEBSOCKET_CONNECTION_MAX_RETRY_BACKOFF);
+                        launcher.getListener().getLogger().println("Retrying in " + backoffInSeconds + "s ...");
+                        try {
+                            Thread.sleep(backoffInSeconds * 1000);
+                        } catch (InterruptedException ex) {
+                            launcher.getListener().getLogger().println("Retry wait interrupted");
+                        } finally {
+                            launcher.getListener().getLogger().println("Retrying...");
+                        }
                     }
-                } catch (RejectedExecutionException e) {
-                    throw new IOException(
-                            "Connection was rejected, you should increase the Max connections to Kubernetes API", e);
+
+                    try {
+                        final AtomicBoolean alive = new AtomicBoolean(false);
+                        final CountDownLatch started = new CountDownLatch(1);
+                        final CountDownLatch finished = new CountDownLatch(1);
+                        final AtomicLong startAlive = new AtomicLong();
+
+                        ExecWatch watch = getClient().pods().inNamespace(getNamespace()).withName(getPodName()).inContainer(containerName)
+                            .redirectingInput(STDIN_BUFFER_SIZE) // JENKINS-50429
+                            .writingOutput(stream)
+                            .writingError(stream)
+                            .writingErrorChannel(error)
+                            .usingListener(new ExecListener() {
+                                @Override
+                                public void onOpen() {
+                                    alive.set(true);
+                                    started.countDown();
+                                    startAlive.set(System.nanoTime());
+                                    LOGGER.log(Level.FINEST, "onOpen : {0}", finished);
+                                }
+
+                                @Override
+                                public void onFailure(Throwable t, Response response) {
+                                    alive.set(false);
+                                    t.printStackTrace(launcher.getListener().getLogger());
+                                    started.countDown();
+                                    LOGGER.log(Level.FINEST, "onFailure : {0}", finished);
+                                    if (finished.getCount() == 0) {
+                                        LOGGER.log(Level.WARNING,
+                                            "onFailure called but latch already finished. This may be a bug in the kubernetes-plugin");
+                                    }
+                                    finished.countDown();
+                                }
+
+                                @Override
+                                public void onClose(int i, String s) {
+                                    alive.set(false);
+                                    started.countDown();
+                                    LOGGER.log(Level.FINEST, "onClose : {0} [{1} ms]", new Object[]{finished, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startAlive.get())});
+                                    if (finished.getCount() == 0) {
+                                        LOGGER.log(Level.WARNING,
+                                            "onClose called but latch already finished. This indicates a bug in the kubernetes-plugin");
+                                    }
+                                    finished.countDown();
+                                }
+                            }).exec(sh);
+                        
+                        // prevent a wait forever if the connection is closed as the listener would never be called
+                        try {
+                            if (started.await(WEBSOCKET_CONNECTION_TIMEOUT, TimeUnit.SECONDS)) {
+                                watchWrapper = new ExecWatchWrapper(watch, alive, finished);
+                            } else {
+                                closeWatch(watch);
+                                launcher.getListener().error("Timed out waiting for websocket connection. "
+                                    + "You should increase the value of system property "
+                                    + WEBSOCKET_CONNECTION_TIMEOUT_SYSTEM_PROPERTY + " currently set at "
+                                    + WEBSOCKET_CONNECTION_TIMEOUT + " seconds");
+                            }
+                        } catch (InterruptedException e) {
+                            closeWatch(watch);
+                            throw e;
+                        }
+                        
+                    } catch (KubernetesClientException e) {
+                        launcher.getListener().getLogger().print("Failed to start websocket connection: ");
+                        
+                        // In case of 400 / Bad Request, do not attempt a retry
+                        if (e.getCause() instanceof WebSocketHandshakeException) {
+                            WebSocketHandshakeException wsException = (WebSocketHandshakeException) e.getCause();
+                            if (wsException.getResponse() != null && wsException.getResponse().code() == 400) {
+                                throw e;
+                            }
+                        }
+                        
+                        e.printStackTrace(launcher.getListener().getLogger());
+                    } catch (InterruptedException e) {
+                        launcher.getListener().getLogger().println("Failed to start websocket connection: " +
+                            "Interrupted while waiting for websocket connection, you should consider increasing the Max connections to Kubernetes API.");
+                        e.printStackTrace(launcher.getListener().getLogger());
+                    } finally {
+                        attempts++;
+                    }
                 }
 
-                boolean hasStarted = false;
-                try {
-                    // prevent a wait forever if the connection is closed as the listener would never be called
-                    hasStarted = started.await(WEBSOCKET_CONNECTION_TIMEOUT, TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    closeWatch(watch);
-                    throw new IOException(
-                            "Interrupted while waiting for websocket connection, you should increase the Max connections to Kubernetes API",
-                            e);
+                if (watchWrapper == null || watchWrapper.getExecWatch() == null) {
+                    throw new AbortException("Failed to start websocket connection after "
+                        + attempts + " attempts. Check logs above for more details.");
                 }
 
-                if (!hasStarted) {
-                    closeWatch(watch);
-                    throw new IOException("Timed out waiting for websocket connection. "
-                            + "You should increase the value of system property "
-                            + WEBSOCKET_CONNECTION_TIMEOUT_SYSTEM_PROPERTY + " currently set at "
-                            + WEBSOCKET_CONNECTION_TIMEOUT + " seconds");
-                }
+                ExecWatch watch = watchWrapper.getExecWatch();
+                final AtomicBoolean alive = watchWrapper.getAlive();
+                final CountDownLatch finished = watchWrapper.getFinished();
 
                 try {
                     // Depends on the ping time with the Kubernetes API server
@@ -461,6 +506,10 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
                     toggleStdout.disable();
                     OutputStream stdin = watch.getInput();
                     PrintStream in = new PrintStream(stdin, true, StandardCharsets.UTF_8.name());
+                    if (!launcher.isUnix()) {
+                        in.print("@echo off");
+                        in.print(newLine(true));
+                    }
                     if (pwd != null) {
                         // We need to get into the project workspace.
                         // The workspace is not known in advance, so we have to execute a cd command.
@@ -493,7 +542,31 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
                     LOGGER.log(Level.FINEST, "Launching with env vars: {0}", envVars.toString());
 
                     setupEnvironmentVariable(envVars, in, !launcher.isUnix());
-
+                    if (!launcher.isUnix() && toggleOutputForCaller!= null) {
+                        // Windows welcome message should not be sent to the caller as it is a side-effect of calling the wrapping cmd.exe
+                        // Microsoft Windows [Version 10.0.17763.2686]
+                        // (c) 2018 Microsoft Corporation. All rights reserved.
+                        //
+                        // C:\>
+                        stream.flush();
+                        long beginning = System.currentTimeMillis();
+                        // watch for the prompt character
+                        while(!dryRunCaller.toString(StandardCharsets.UTF_8.name()).contains(">")) {
+                            Thread.sleep(100);
+                        }
+                        LOGGER.log(Level.FINEST, "Windows prompt printed after " + (System.currentTimeMillis() - beginning) + " ms");
+                    }
+                    // We don't need to capture output anymore
+                    if (toggleDryRunCaller != null) {
+                        toggleDryRunCaller.disable();
+                    }
+                    // Clear any captured bytes
+                    if (dryRunCaller != null) {
+                        dryRunCaller.reset();
+                    }
+                    if (toggleOutputForCaller != null) {
+                        toggleOutputForCaller.enable();
+                    }
                     doExec(in, !launcher.isUnix(), printStream, masks, commands);
 
                     LOGGER.log(Level.INFO, "Created process inside pod: [" + getPodName() + "], container: ["
@@ -559,10 +632,46 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
         }
     }
 
+    /**
+     * Wrapper of ExecWatch that also hold watch attributes for liveness and closure.
+     */
+    private static class ExecWatchWrapper {
+
+        /* the watch */
+        private final ExecWatch execWatch;
+        /* atomic boolean value for watch liveness */
+        private final AtomicBoolean alive;
+        /* count down latch value for watch exit */
+        private final CountDownLatch finished;
+
+        public ExecWatchWrapper(ExecWatch execWatch, AtomicBoolean alive, CountDownLatch finished) {
+            this.execWatch = execWatch;
+            this.alive = alive;
+            this.finished = finished;
+        }
+
+        public ExecWatch getExecWatch() {
+            return execWatch;
+        }
+
+        public AtomicBoolean getAlive() {
+            return alive;
+        }
+
+        public CountDownLatch getFinished() {
+            return finished;
+        }
+    }
+
     private static class ToggleOutputStream extends FilterOutputStream {
         private boolean disabled;
         public ToggleOutputStream(OutputStream out) {
+            this(out, false);
+        }
+
+        public ToggleOutputStream(OutputStream out, boolean disabled) {
             super(out);
+            this.disabled = disabled;
         }
 
         public void disable() {
@@ -577,6 +686,20 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
         public void write(int b) throws IOException {
             if (!disabled) {
                 out.write(b);
+            }
+        }
+
+        @Override
+        public void write(byte[] b) throws IOException {
+            if (!disabled) {
+                out.write(b);
+            }
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            if (!disabled) {
+                out.write(b, off, len);
             }
         }
     }
@@ -633,7 +756,7 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
         // Mask sensitive output
         MaskOutputStream maskedOutput = new MaskOutputStream(teeOutput, masks);
         // Tee everything together
-        PrintStream tee = null;
+        PrintStream tee;
         try {
             String encoding = StandardCharsets.UTF_8.name();
             tee = new PrintStream(new TeeOutputStream(in, maskedOutput), false, encoding);
@@ -641,9 +764,11 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
             PrintStream unmasked = new PrintStream(teeOutput, false, encoding);
             unmasked.print("Executing command: ");
             for (String statement : statements) {
-                tee.append("\"")
-                        .append(statement)
-                        .append("\" ");
+                if (windows) {
+                    tee.append(statement).append(" ");
+                } else {
+                    tee.append("\"").append(statement).append("\" ");
+                }
             }
             tee.print(newLine(windows));
             LOGGER.log(Level.FINEST, loggingOutput.toString(encoding) + "[" + TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - start) + " μs." + "]");
@@ -652,7 +777,7 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
             tee.print(newLine(windows));
             tee.flush();
         } catch (UnsupportedEncodingException e) {
-            e.printStackTrace();
+            LOGGER.log(Level.SEVERE, "Failed to execute command because of unsupported encoding", e);
         }
     }
 
@@ -680,15 +805,6 @@ public class ContainerExecDecorator extends LauncherDecorator implements Seriali
             allCommands.add(fixedCommand);
         }
         return allCommands.toArray(new String[allCommands.size()]);
-    }
-
-    private static Long containerReadyTimeout() {
-        String timeout = System.getProperty(CONTAINER_READY_TIMEOUT_SYSTEM_PROPERTY, String.valueOf(DEFAULT_CONTAINER_READY_TIMEOUT));
-        try {
-            return Long.parseLong(timeout);
-        } catch (NumberFormatException e) {
-            return DEFAULT_CONTAINER_READY_TIMEOUT;
-        }
     }
 
     private static void closeWatch(ExecWatch watch) {

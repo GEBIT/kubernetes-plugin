@@ -488,31 +488,36 @@ public class PodTemplateUtils {
             return null;
         }
 
-        StringBuilder sb = new StringBuilder();
-        if (!isNullOrEmpty(defaultProviderTemplate)) {
-            sb.append(defaultProviderTemplate).append(" ");
-
-        }
-        if (!isNullOrEmpty(template.getInheritFrom())) {
-            sb.append(template.getInheritFrom()).append(" ");
-        }
-        String inheritFrom = sb.toString();
-
-        if (isNullOrEmpty(inheritFrom)) {
+        List<String> inheritFrom = computedInheritFrom(template, defaultProviderTemplate);
+        if (inheritFrom.isEmpty()) {
             return template;
         } else {
-            String[] parentNames = inheritFrom.split("[ ]+");
             PodTemplate parent = null;
-            for (String name : parentNames) {
+            for (String name : inheritFrom) {
                 PodTemplate next = getTemplateByName(name, allTemplates);
                 if (next != null) {
                     parent = combine(parent, unwrap(next, allTemplates));
                 }
             }
             PodTemplate combined = combine(parent, template);
+            combined.setUnwrapped(true);
             LOGGER.log(Level.FINEST, "Combined parent + template is {0}", combined);
             return combined;
         }
+    }
+
+    private static List<String> computedInheritFrom(PodTemplate template, String defaultProviderTemplate) {
+        List<String> hierarchy = new ArrayList<>();
+        if (!isNullOrEmpty(defaultProviderTemplate)) {
+            hierarchy.add(defaultProviderTemplate);
+        }
+        if (!isNullOrEmpty(template.getInheritFrom())) {
+            String[] split = template.getInheritFrom().split(" +");
+            for (String name : split) {
+                hierarchy.add(name);
+            }
+        }
+        return Collections.unmodifiableList(hierarchy);
     }
 
     /**
@@ -533,6 +538,7 @@ public class PodTemplateUtils {
      * @param templates     The list of all templates.
      * @return              The first pod template from the collection that has a matching label.
      */
+    @CheckForNull
     public static PodTemplate getTemplateByLabel(@CheckForNull Label label, Collection<PodTemplate> templates) {
         for (PodTemplate t : templates) {
             if ((label == null && t.getNodeUsageMode() == Node.Mode.NORMAL) || (label != null && label.matches(t.getLabelSet()))) {
@@ -666,15 +672,13 @@ public class PodTemplateUtils {
     }
 
     private static List<EnvVar> combineEnvVars(Container parent, Container template) {
-        Map<String,EnvVar> combinedEnvVars = mergeMaps(envVarstoMap(parent.getEnv()),envVarstoMap(template.getEnv()));
-        return combinedEnvVars.entrySet().stream()
-                .filter(envVar -> !isNullOrEmpty(envVar.getKey()))
-                .map(Map.Entry::getValue)
-                .collect(toList());
-    }
-
-    static Map<String, EnvVar> envVarstoMap(List<EnvVar> envVarList) {
-        return envVarList.stream().collect(toMap(EnvVar::getName, Function.identity()));
+        Map<String, EnvVar> combinedEnvVars = new HashMap<>();
+        Stream.of(parent.getEnv(), template.getEnv())
+                .filter(Objects::nonNull)
+                .flatMap(List::stream)
+                .filter(var -> !isNullOrEmpty(var.getName()))
+                .forEachOrdered(var -> combinedEnvVars.put(var.getName(), var));
+        return new ArrayList<>(combinedEnvVars.values());
     }
 
     private static List<TemplateEnvVar> combineEnvVars(ContainerTemplate parent, ContainerTemplate template) {

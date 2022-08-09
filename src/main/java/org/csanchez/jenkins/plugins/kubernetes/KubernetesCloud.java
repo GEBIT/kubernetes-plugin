@@ -48,6 +48,7 @@ import com.cloudbees.plugins.credentials.domains.URIRequirementBuilder;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.Extension;
+import hudson.TcpSlaveAgentListener;
 import hudson.Util;
 import hudson.init.InitMilestone;
 import hudson.init.Initializer;
@@ -110,6 +111,7 @@ public class KubernetesCloud extends Cloud {
     private boolean capOnlyOnAlivePods;
 
     private String namespace;
+    private String jnlpregistry;
     private boolean webSocket;
     private boolean directConnection = false;
     private String jenkinsUrl;
@@ -269,6 +271,15 @@ public class KubernetesCloud extends Cloud {
     @DataBoundSetter
     public void setNamespace(String namespace) {
         this.namespace = Util.fixEmpty(namespace);
+    }
+
+    public String getJnlpregistry() {
+        return jnlpregistry;
+    }
+
+    @DataBoundSetter
+    public void setJnlpregistry(String jnlpregistry) {
+        this.jnlpregistry = Util.fixEmpty(jnlpregistry);
     }
 
     @CheckForNull
@@ -532,8 +543,9 @@ public class KubernetesCloud extends Cloud {
                 LOGGER.log(Level.FINE, "Template for label \"{0}\": {1}", new Object[]{label, podTemplate.getName()});
                 // check overall concurrency limit using the default label(s) on all templates
                 int numExecutors = 1;
+                PodTemplate unwrappedTemplate = getUnwrappedTemplate(podTemplate);
                 while (toBeProvisioned > 0 && KubernetesProvisioningLimits.get().register(this, podTemplate, numExecutors)) {
-                    plannedNodes.add(PlannedNodeBuilderFactory.createInstance().cloud(this).template(podTemplate).label(label).numExecutors(1).build());
+                    plannedNodes.add(PlannedNodeBuilderFactory.createInstance().cloud(this).template(unwrappedTemplate).label(label).numExecutors(1).build());
                     toBeProvisioned--;
                 }
                 if (!plannedNodes.isEmpty()) {
@@ -571,6 +583,7 @@ public class KubernetesCloud extends Cloud {
      * @param label label to look for in templates
      * @return the template
      */
+    @CheckForNull
     public PodTemplate getTemplate(@CheckForNull Label label) {
         return PodTemplateUtils.getTemplateByLabel(label, getAllTemplates());
     }
@@ -662,6 +675,7 @@ public class KubernetesCloud extends Cloud {
                 Objects.equals(serverUrl, that.serverUrl) &&
                 Objects.equals(serverCertificate, that.serverCertificate) &&
                 Objects.equals(namespace, that.namespace) &&
+                Objects.equals(jnlpregistry, that.jnlpregistry)&&
                 Objects.equals(jenkinsUrl, that.jenkinsUrl) &&
                 Objects.equals(jenkinsTunnel, that.jenkinsTunnel) &&
                 Objects.equals(credentialsId, that.credentialsId) &&
@@ -674,7 +688,7 @@ public class KubernetesCloud extends Cloud {
     @Override
     public int hashCode() {
         return Objects.hash(defaultsProviderTemplate, templates, serverUrl, serverCertificate, skipTlsVerify,
-                addMasterProxyEnvVars, capOnlyOnAlivePods, namespace, jenkinsUrl, jenkinsTunnel, credentialsId,
+                addMasterProxyEnvVars, capOnlyOnAlivePods, namespace, jnlpregistry, jenkinsUrl, jenkinsTunnel, credentialsId,
                 containerCap, retentionTimeout, connectTimeout, readTimeout, podLabels, usageRestricted,
                 maxRequestsPerHost, podRetention, useJenkinsProxy);
     }
@@ -786,9 +800,14 @@ public class KubernetesCloud extends Cloud {
 
         @SuppressWarnings("unused") // used by jelly
         public FormValidation doCheckDirectConnection(@QueryParameter boolean value, @QueryParameter String jenkinsUrl, @QueryParameter boolean webSocket) throws IOException, ServletException {
-            int slaveAgentPort = Jenkins.get().getSlaveAgentPort();
-            if (slaveAgentPort == -1 && !webSocket) {
-                return FormValidation.warning("'TCP port for inbound agents' is disabled in Global Security settings. Connecting Kubernetes agents will not work without this or WebSocket mode!");
+            if (!webSocket) {
+                TcpSlaveAgentListener tcpSlaveAgentListener = Jenkins.get().getTcpSlaveAgentListener();
+                if (tcpSlaveAgentListener == null) {
+                    return FormValidation.warning("'TCP port for inbound agents' is disabled in Global Security settings. Connecting Kubernetes agents will not work without this or WebSocket mode!");
+                }
+                if (tcpSlaveAgentListener.getIdentityPublicKey() == null) {
+                    return FormValidation.error("You must install the instance-identity plugin to use inbound agents in TCP mode");
+                }
             }
 
             if(value) {
@@ -797,7 +816,7 @@ public class KubernetesCloud extends Cloud {
                 }
                 if(!isEmpty(jenkinsUrl)) return FormValidation.warning("No need to configure Jenkins URL when direct connection is enabled");
 
-                if(slaveAgentPort == 0) return FormValidation.warning(
+                if(Jenkins.get().getSlaveAgentPort() == 0) return FormValidation.warning(
                         "A random 'TCP port for inbound agents' is configured in Global Security settings. In 'direct connection' mode agents will not be able to reconnect to a restarted controller with random port!");
             } else {
                 if (isEmpty(jenkinsUrl)) {
@@ -883,6 +902,7 @@ public class KubernetesCloud extends Cloud {
                 ", addMasterProxyEnvVars=" + addMasterProxyEnvVars +
                 ", capOnlyOnAlivePods=" + capOnlyOnAlivePods +
                 ", namespace='" + namespace + '\'' +
+                ", jnlpregistry='" + jnlpregistry + '\'' +
                 ", jenkinsUrl='" + jenkinsUrl + '\'' +
                 ", jenkinsTunnel='" + jenkinsTunnel + '\'' +
                 ", credentialsId='" + credentialsId + '\'' +

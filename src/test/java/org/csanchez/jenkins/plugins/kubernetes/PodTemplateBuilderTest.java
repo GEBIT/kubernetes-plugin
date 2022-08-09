@@ -145,6 +145,56 @@ public class PodTemplateBuilderTest {
     }
 
     @Test
+    public void testBuildJnlpFromYamlWithNullEnv() throws Exception {
+        PodTemplate template = new PodTemplate();
+        template.setYaml(loadYamlFile("pod-jnlp-nullenv.yaml"));
+        Pod pod = new PodTemplateBuilder(template, slave).build();
+        Optional<Container> jnlp = pod.getSpec()
+                .getContainers()
+                .stream()
+                .filter(c -> KubernetesCloud.JNLP_NAME.equals(c.getName()))
+                .findFirst();
+        assertThat("jnlp container is present", jnlp.isPresent(), is(true));
+        assertThat(jnlp.get().getEnv(), hasSize(greaterThan(0)));
+    }
+
+    @Test
+    public void testValidateDockerRegistryUIOverride() throws Exception {
+        final String jnlpregistry = "registry.example.com";
+        cloud.setJnlpregistry(jnlpregistry);
+        DEFAULT_JNLP_DOCKER_REGISTRY_PREFIX = "jenkins.docker.com/docker-hub"; // should be ignored
+        PodTemplate template = new PodTemplate();
+        template.setYaml(loadYamlFile("pod-busybox.yaml"));
+        setupStubs();
+        Pod pod = new PodTemplateBuilder(template, slave).build();
+        // check containers
+        Map<String, Container> containers = toContainerMap(pod);
+        assertEquals(2, containers.size());
+
+        assertEquals("busybox", containers.get("busybox").getImage());
+        assertEquals(jnlpregistry + "/" + DEFAULT_JNLP_IMAGE, containers.get("jnlp").getImage());
+        assertThat(pod.getMetadata().getLabels(), hasEntry("jenkins", "slave"));
+    }
+
+    @Test
+    public void testValidateDockerRegistryUIOverrideWithSlashSuffix() throws Exception {
+        final String jnlpregistry = "registry.example.com/";
+        cloud.setJnlpregistry(jnlpregistry);
+        DEFAULT_JNLP_DOCKER_REGISTRY_PREFIX = "jenkins.docker.com/docker-hub"; // should be ignored
+        PodTemplate template = new PodTemplate();
+        template.setYaml(loadYamlFile("pod-busybox.yaml"));
+        setupStubs();
+        Pod pod = new PodTemplateBuilder(template, slave).build();
+        // check containers
+        Map<String, Container> containers = toContainerMap(pod);
+        assertEquals(2, containers.size());
+
+        assertEquals("busybox", containers.get("busybox").getImage());
+        assertEquals(jnlpregistry + DEFAULT_JNLP_IMAGE, containers.get("jnlp").getImage());
+        assertThat(pod.getMetadata().getLabels(), hasEntry("jenkins", "slave"));
+    }
+
+    @Test
     @TestCaseName("{method}(directConnection={0})")
     @Parameters({ "true", "false" })
     public void testValidateDockerRegistryPrefixOverride(boolean directConnection) throws Exception {
@@ -208,8 +258,7 @@ public class PodTemplateBuilderTest {
     @Test
     public void testBuildWithDynamicPVCWorkspaceVolume() {
         PodTemplate template = new PodTemplate();
-        template.setWorkspaceVolume(new DynamicPVCWorkspaceVolume(
-                null, null,null));
+        template.setWorkspaceVolume(new DynamicPVCWorkspaceVolume());
         ContainerTemplate containerTemplate = new ContainerTemplate("name", "image");
         containerTemplate.setWorkingDir("");
         template.getContainers().add(containerTemplate);
@@ -368,6 +417,23 @@ public class PodTemplateBuilderTest {
     }
 
     @Test
+    public void namespaceFromCloud() {
+        when(cloud.getNamespace()).thenReturn("cloud-namespace");
+        PodTemplate template = new PodTemplate();
+        Pod pod = new PodTemplateBuilder(template, slave).build();
+        assertEquals("cloud-namespace", pod.getMetadata().getNamespace());
+    }
+
+    @Test
+    public void namespaceFromTemplate() {
+        when(cloud.getNamespace()).thenReturn("cloud-namespace");
+        PodTemplate template = new PodTemplate();
+        template.setNamespace("template-namespace");
+        Pod pod = new PodTemplateBuilder(template, slave).build();
+        assertEquals("template-namespace", pod.getMetadata().getNamespace());
+    }
+
+    @Test
     public void defaultRequests() throws Exception {
         PodTemplate template = new PodTemplate();
         Pod pod = new PodTemplateBuilder(template, slave).build();
@@ -385,10 +451,12 @@ public class PodTemplateBuilderTest {
     public void testOverridesFromYaml(boolean directConnection) throws Exception {
         cloud.setDirectConnection(directConnection);
         PodTemplate template = new PodTemplate();
+        template.setNamespace("template-namespace");
         template.setYaml(loadYamlFile("pod-overrides.yaml"));
         setupStubs();
         Pod pod = new PodTemplateBuilder(template, slave).build();
 
+        assertEquals("yaml-namespace", pod.getMetadata().getNamespace());
         Map<String, Container> containers = toContainerMap(pod);
         assertEquals(1, containers.size());
         Container jnlp = containers.get("jnlp");
@@ -549,9 +617,10 @@ public class PodTemplateBuilderTest {
         Pod pod = new PodTemplateBuilder(result, slave).build();
         Map<String, Container> containers = toContainerMap(pod);
         Container jnlp = containers.get("jnlp");
-        Map<String, EnvVar> env = PodTemplateUtils.envVarstoMap(jnlp.getEnv());
-        assertEquals("2", env.get("VAR1").getValue()); // value from child
-        assertEquals("1", env.get("VAR2").getValue()); // value from parent
+        assertThat(jnlp.getEnv(), hasItems(
+                new EnvVar("VAR1", "2", null), // value from child
+                new EnvVar("VAR2", "1", null)  // value from parent
+        ));
     }
 
     @Test

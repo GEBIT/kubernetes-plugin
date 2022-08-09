@@ -14,6 +14,8 @@ import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
+import net.jcip.annotations.GuardedBy;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 
@@ -50,6 +52,9 @@ public final class KubernetesProvisioningLimits {
     
     private static final String BC_LIMIT_URL = "http://bc-limit.bc-limit.svc/validate/pods";
 
+    @GuardedBy("this")
+    private boolean init;
+
     /**
      * Tracks current number of kubernetes agents per pod template
      */
@@ -60,22 +65,26 @@ public final class KubernetesProvisioningLimits {
      */
     private final Map<String, Integer> cloudCounts = new HashMap<>();
 
-    @Initializer(after = InitMilestone.SYSTEM_CONFIG_LOADED)
-    public static void init() {
-        // We don't want anything to be provisioned while we do the initial count.
-        Queue.withLock(() -> {
-            final KubernetesProvisioningLimits instance = get();
-            synchronized(instance) {
+    /**
+     * Initialize limits counter
+     * @return whether the instance was already initialized before this call.
+     */
+    private synchronized boolean initInstance() {
+        boolean previousInit = init;
+        if (!init) {
+            Queue.withLock(() -> {
                 Jenkins.get().getNodes()
                         .stream()
                         .filter(KubernetesSlave.class::isInstance)
                         .map(KubernetesSlave.class::cast)
                         .forEach(node -> {
-                    instance.cloudCounts.put(node.getCloudName(), instance.getGlobalCount(node.getCloudName()) + node.getNumExecutors());
-                    instance.podTemplateCounts.put(node.getTemplateId(), instance.getPodTemplateCount(node.getTemplateId()) + node.getNumExecutors());
-                });
-            }
-        });
+                            cloudCounts.put(node.getCloudName(), getGlobalCount(node.getCloudName()) + node.getNumExecutors());
+                            podTemplateCounts.put(node.getTemplateId(), getPodTemplateCount(node.getTemplateId()) + node.getNumExecutors());
+                        });
+            });
+            init = true;
+        }
+        return previousInit;
     }
 
     /**
@@ -92,6 +101,7 @@ public final class KubernetesProvisioningLimits {
      * @param numExecutors the number of executors (pretty much always 1)
      */
     public synchronized boolean register(@NonNull KubernetesCloud cloud, @NonNull PodTemplate podTemplate, int numExecutors) {
+        initInstance();
         int newGlobalCount = getGlobalCount(cloud.name) + numExecutors;
         if (newGlobalCount <= cloud.getContainerCap()) {
             int newPodTemplateCount = getPodTemplateCount(podTemplate.getId()) + numExecutors;
@@ -126,19 +136,21 @@ public final class KubernetesProvisioningLimits {
      * @param numExecutors the number of executors (pretty much always 1)
      */
     public synchronized void unregister(@NonNull KubernetesCloud cloud, @NonNull PodTemplate podTemplate, int numExecutors) {
-        int newGlobalCount = getGlobalCount(cloud.name) - numExecutors;
-        if (newGlobalCount < 0) {
-            LOGGER.log(Level.WARNING, "Global count for " + cloud.name + " went below zero. There is likely a bug in kubernetes-plugin");
-        }
-        cloudCounts.put(cloud.name, Math.max(0, newGlobalCount));
-        LOGGER.log(Level.FINEST, () -> cloud.name + " global limit: " + Math.max(0, newGlobalCount) + "/" + cloud.getContainerCap());
+        if (initInstance()) {
+            int newGlobalCount = getGlobalCount(cloud.name) - numExecutors;
+            if (newGlobalCount < 0) {
+                LOGGER.log(Level.WARNING, "Global count for " + cloud.name + " went below zero. There is likely a bug in kubernetes-plugin");
+            }
+            cloudCounts.put(cloud.name, Math.max(0, newGlobalCount));
+            LOGGER.log(Level.FINEST, () -> cloud.name + " global limit: " + Math.max(0, newGlobalCount) + "/" + cloud.getContainerCap());
 
-        int newPodTemplateCount = getPodTemplateCount(podTemplate.getId()) - numExecutors;
-        if (newPodTemplateCount < 0) {
-            LOGGER.log(Level.WARNING, "Pod template count for " + podTemplate.getName() + " went below zero. There is likely a bug in kubernetes-plugin");
+            int newPodTemplateCount = getPodTemplateCount(podTemplate.getId()) - numExecutors;
+            if (newPodTemplateCount < 0) {
+                LOGGER.log(Level.WARNING, "Pod template count for " + podTemplate.getName() + " went below zero. There is likely a bug in kubernetes-plugin");
+            }
+            podTemplateCounts.put(podTemplate.getId(), Math.max(0, newPodTemplateCount));
+            LOGGER.log(Level.FINEST, () -> podTemplate.getName() + " template limit: " + Math.max(0, newPodTemplateCount) + "/" + podTemplate.getInstanceCap());
         }
-        podTemplateCounts.put(podTemplate.getId(), Math.max(0, newPodTemplateCount));
-        LOGGER.log(Level.FINEST, () -> podTemplate.getName() + " template limit: " + Math.max(0, newPodTemplateCount) + "/" + podTemplate.getInstanceCap());
     }
 
     /**
@@ -259,10 +271,11 @@ public final class KubernetesProvisioningLimits {
         @Override
         protected void onDeleted(@NonNull Node node) {
             if (node instanceof KubernetesSlave) {
+                KubernetesProvisioningLimits instance = KubernetesProvisioningLimits.get();
                 KubernetesSlave kubernetesNode = (KubernetesSlave) node;
                 PodTemplate template = kubernetesNode.getTemplateOrNull();
                 if (template != null) {
-                    KubernetesProvisioningLimits.get().unregister(kubernetesNode.getKubernetesCloud(), template, node.getNumExecutors());
+                    instance.unregister(kubernetesNode.getKubernetesCloud(), template, node.getNumExecutors());
                 }
             }
         }

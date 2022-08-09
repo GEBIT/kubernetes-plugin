@@ -3,13 +3,13 @@
   <parent>
     <groupId>org.jenkins-ci.plugins</groupId>
     <artifactId>plugin</artifactId>
-    <version>4.31</version>
+    <version>4.42</version>
     <relativePath />
   </parent>
 
   <groupId>org.csanchez.jenkins.plugins</groupId>
   <artifactId>kubernetes</artifactId>
-  <version>${revision}${changelist}</version>
+  <version>${changelist}</version>
   <name>Kubernetes plugin</name>
   <description>Jenkins plugin to run dynamic agents in a Kubernetes cluster</description>
   <packaging>hpi</packaging>
@@ -39,24 +39,23 @@
   </developers>
 
   <properties>
-    <revision>1.30.11-gebit4</revision>
-    <changelist>-SNAPSHOT</changelist>
+    <changelist>999999-SNAPSHOT</changelist>
     <!-- in minikube
     minikube ip | sed -e 's/\([0-9]*\.[0-9]*\.[0-9]*\).*/\1.1/' -->
     <connectorHost />
     <jenkins.host.address />
     <slaveAgentPort />
-    <java.level>8</java.level>
-    <jenkins.version>2.263.1</jenkins.version>
+    <jenkins.version>2.332.1</jenkins.version>
     <no-test-jar>false</no-test-jar>
     <useBeta>true</useBeta>
+    <gitHubRepo>jenkinsci/${project.artifactId}-plugin</gitHubRepo>
   </properties>
 
   <dependencies>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
       <artifactId>kubernetes-client-api</artifactId>
-      <version>5.4.1</version>
+      <version>5.12.1-187.v577c3e368fb_6</version>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
@@ -125,7 +124,6 @@
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
       <artifactId>metrics</artifactId>
-      <version>4.0.2.8</version>
     </dependency>
     <dependency>
       <groupId>io.jenkins.plugins</groupId>
@@ -199,15 +197,7 @@
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
       <artifactId>ssh-agent</artifactId>
-      <version>1.20</version>
       <scope>test</scope>
-      <exclusions>
-        <!-- conflict with sshd module -->
-        <exclusion>
-          <groupId>org.apache.sshd</groupId>
-          <artifactId>sshd-core</artifactId>
-        </exclusion>
-      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
@@ -218,12 +208,6 @@
       <groupId>org.jenkins-ci.plugins</groupId>
       <artifactId>bouncycastle-api</artifactId>
       <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.jenkins-ci.modules</groupId>
-      <artifactId>instance-identity</artifactId>
-      <version>2.2</version>
-      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>pl.pragmatists</groupId>
@@ -253,6 +237,18 @@
       <artifactId>junit</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>io.fabric8</groupId>
+      <artifactId>kubernetes-server-mock</artifactId>
+      <version>5.12.1</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>org.junit.jupiter</groupId>
+          <artifactId>junit-jupiter-api</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
   </dependencies>
 
 
@@ -260,21 +256,32 @@
     <dependencies>
       <dependency>
         <groupId>io.jenkins.tools.bom</groupId>
-        <artifactId>bom-2.263.x</artifactId>
-        <version>984.vb5eaac999a7e</version>
+        <artifactId>bom-2.332.x</artifactId>
+        <version>1494.v5d4d71876757</version>
         <scope>import</scope>
         <type>pom</type>
-      </dependency>
-      <dependency>
-        <groupId>joda-time</groupId>
-        <artifactId>joda-time</artifactId>
-        <version>2.10.2</version>
       </dependency>
       <!-- Fix InjectedTest -->
       <dependency>
         <groupId>org.jenkins-ci.plugins</groupId>
         <artifactId>docker-commons</artifactId>
-        <version>1.17</version>
+        <version>1.18</version>
+      </dependency>
+      <!-- fix requireUpperBoundDeps -->
+      <dependency><!-- jenkins-core vs. junit plugin -->
+        <groupId>javax.annotation</groupId>
+        <artifactId>javax.annotation-api</artifactId>
+        <version>1.3.2</version>
+      </dependency>
+      <dependency><!-- pipeline-model-extensions vs. io.jenkins.configuration-as-code:test-harness -->
+        <groupId>joda-time</groupId>
+        <artifactId>joda-time</artifactId>
+        <version>2.10.5</version>
+      </dependency>
+      <dependency><!-- io.jenkins:configuration-as-code vs. org.jenkins-ci.plugins:junit -->
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-lang3</artifactId>
+        <version>3.12.0</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

@@ -26,6 +26,7 @@ package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 
 import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.CONTAINER_ENV_VAR_FROM_SECRET_VALUE;
 import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.POD_ENV_VAR_FROM_SECRET_VALUE;
+import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.WINDOWS_1809_BUILD;
 import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.assumeWindows;
 import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.deletePods;
 import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.getLabels;
@@ -72,7 +73,6 @@ import org.csanchez.jenkins.plugins.kubernetes.PodTemplateUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
 import org.jenkinsci.plugins.workflow.job.WorkflowRun;
-import org.jenkinsci.plugins.workflow.support.steps.ExecutorStepExecution;
 import org.jenkinsci.plugins.workflow.test.steps.SemaphoreStep;
 import org.junit.After;
 import org.junit.Before;
@@ -149,7 +149,7 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
 
         Map<String, String> labels = getLabels(cloud, this, name);
         SemaphoreStep.waitForStart("pod/1", b);
-        for (Computer c : Arrays.stream(r.jenkins.getComputers()).filter(c -> c instanceof SlaveComputer).collect(Collectors.toList())) { // TODO perhaps this should be built into JenkinsRule via ComputerListener.preLaunch?
+        for (Computer c : getKubernetesComputers()) { // TODO perhaps this should be built into JenkinsRule via ComputerListener.preLaunch?
             new Thread(() -> {
                 long pos = 0;
                 try {
@@ -200,7 +200,6 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
         r.assertBuildStatusSuccess(r.waitForCompletion(b));
         r.assertLogContains("container=busybox", b);
         r.assertLogContains("script file contents: ", b);
-        r.assertLogContains("Created container jnlp", b);
         assertFalse("There are pods leftover after test execution, see previous logs",
                 deletePods(cloud.connect(), getLabels(cloud, this, name), true));
         assertThat("routine build should not issue warnings",
@@ -243,13 +242,8 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
         SemaphoreStep.success("pod2/1", null);
         r.assertBuildStatusSuccess(r.waitForCompletion(b));
         r.assertLogContains("script file contents: ", b);
-        r.assertLogContains("Started container jnlp", b);
         assertFalse("There are pods leftover after test execution, see previous logs",
                 deletePods(cloud.connect(), getLabels(cloud, this, name), true));
-    }
-
-    private List<PodTemplate> podTemplatesWithLabel(String label, List<PodTemplate> templates) {
-        return templates.stream().filter(t -> label.equals(t.getLabel())).collect(Collectors.toList());
     }
 
     @Issue("JENKINS-57893")
@@ -291,7 +285,6 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
         standard.setName("standard");
         cloud.addTemplate(standard);
         r.assertBuildStatusSuccess(r.waitForCompletion(b));
-        r.assertLogContains("Created container jnlp", b);
     }
 
     @Test
@@ -475,12 +468,14 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
     @Issue("JENKINS-49707")
     @Test
     public void terminatedPod() throws Exception {
+        logs.record(KubernetesAgentErrorCondition.class, Level.FINE);
         r.waitForMessage("+ sleep", b);
         deletePods(cloud.connect(), getLabels(this, name), false);
-        r.assertBuildStatus(Result.ABORTED, r.waitForCompletion(b));
-        r.waitForMessage(new ExecutorStepExecution.RemovedNodeCause().getShortDescription(), b);
-        r.waitForMessage("busybox -- terminated", b);
-        r.waitForMessage("jnlp -- terminated", b);
+        r.waitForMessage("busybox --", b);
+        r.waitForMessage("jnlp --", b);
+        r.waitForMessage("was deleted; cancelling node body", b);
+        r.waitForMessage("Retrying", b);
+        r.assertBuildStatusSuccess(r.waitForCompletion(b));
     }
 
     @Issue("JENKINS-59340")
@@ -488,7 +483,9 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
     public void containerTerminated() throws Exception {
         assertBuildStatus(r.waitForCompletion(b), Result.FAILURE, Result.ABORTED);
         r.waitForMessage("Container stress-ng was terminated", b);
+        /* TODO sometimes instead get: Container stress-ng was terminated (Exit Code: 0, Reason: Completed)
         r.waitForMessage("Reason: OOMKilled", b);
+        */
     }
 
     @Test
@@ -518,6 +515,7 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
     public void cascadingDelete() throws Exception {
         try {
             cloud.connect().apps().deployments().withName("cascading-delete").delete();
+            assumeNotNull(cloud.connect().serviceAccounts().withName("jenkins").get());
         } catch (KubernetesClientException x) {
             // Failure executing: DELETE at: https://…/apis/apps/v1/namespaces/kubernetes-plugin-test/deployments/cascading-delete. Message: Forbidden!Configured service account doesn't have access. Service account may have been revoked. deployments.apps "cascading-delete" is forbidden: User "system:serviceaccount:…:…" cannot delete resource "deployments" in API group "apps" in the namespace "kubernetes-plugin-test".
             assumeNoException("was not permitted to clean up any previous deployment, so presumably cannot run test either", x);
@@ -629,7 +627,7 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
     @Issue("JENKINS-57256")
     @Test
     public void basicWindows() throws Exception {
-        assumeWindows();
+        assumeWindows(WINDOWS_1809_BUILD);
         cloud.setDirectConnection(false); // not yet supported by https://github.com/jenkinsci/docker-inbound-agent/blob/517ccd68fd1ce420e7526ca6a40320c9a47a2c18/jenkins-agent.ps1
         r.assertBuildStatusSuccess(r.waitForCompletion(b));
         r.assertLogContains("Directory of C:\\home\\jenkins\\agent\\workspace\\basic Windows", b); // bat
@@ -639,7 +637,7 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
     @Issue("JENKINS-53500")
     @Test
     public void windowsContainer() throws Exception {
-        assumeWindows();
+        assumeWindows(WINDOWS_1809_BUILD);
         cloud.setDirectConnection(false);
         r.assertBuildStatusSuccess(r.waitForCompletion(b));
         r.assertLogContains("Directory of C:\\home\\jenkins\\agent\\workspace\\windows Container\\subdir", b);
@@ -650,7 +648,7 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
     @Ignore("TODO aborts, but with “kill finished with exit code 9009” and “After 20s process did not stop” and no graceful shutdown")
     @Test
     public void interruptedPodWindows() throws Exception {
-        assumeWindows();
+        assumeWindows(WINDOWS_1809_BUILD);
         cloud.setDirectConnection(false);
         r.waitForMessage("starting to sleep", b);
         b.getExecutor().interrupt();
@@ -660,7 +658,7 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
 
     @Test
     public void secretMaskingWindows() throws Exception {
-        assumeWindows();
+        assumeWindows(WINDOWS_1809_BUILD);
         cloud.setDirectConnection(false);
         r.assertBuildStatusSuccess(r.waitForCompletion(b));
         r.assertLogContains("INSIDE_POD_ENV_VAR_FROM_SECRET = **** or " + POD_ENV_VAR_FROM_SECRET_VALUE.toUpperCase(Locale.ROOT), b);
@@ -670,7 +668,18 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
     }
 
     @Test
-    public void dynamicPVC() throws Exception {
+    public void dynamicPVCWorkspaceVolume() throws Exception {
+        try {
+            cloud.connect().persistentVolumeClaims().list();
+        } catch (KubernetesClientException x) {
+            // Error from server (Forbidden): persistentvolumeclaims is forbidden: User "system:serviceaccount:kubernetes-plugin-test:default" cannot list resource "persistentvolumeclaims" in API group "" in the namespace "kubernetes-plugin-test"
+            assumeNoException("was not permitted to list pvcs, so presumably cannot run test either", x);
+        }
+        r.assertBuildStatusSuccess(r.waitForCompletion(b));
+    }
+
+    @Test
+    public void dynamicPVCVolume() throws Exception {
         try {
             cloud.connect().persistentVolumeClaims().list();
         } catch (KubernetesClientException x) {
@@ -682,9 +691,15 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
 
     @Test
     public void invalidPodGetsCancelled() throws Exception {
-        r.assertBuildStatus(Result.FAILURE, r.waitForCompletion(b));
+        r.assertBuildStatus(Result.ABORTED, r.waitForCompletion(b));
         r.assertLogContains("ERROR: Unable to create pod", b);
-        r.assertLogContains("ERROR: Queue task was cancelled", b);
+        r.assertLogContains("Queue task was cancelled", b);
+    }
+
+    @Test
+    public void invalidImageGetsCancelled() throws Exception {
+        r.assertBuildStatus(Result.ABORTED, r.waitForCompletion(b));
+        r.assertLogContains("Queue task was cancelled", b);
     }
 
     @Issue("SECURITY-1646")

@@ -28,6 +28,8 @@ import static java.util.Arrays.*;
 import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.*;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.logging.Level;
@@ -36,9 +38,12 @@ import hudson.slaves.NodeProvisioner;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.jenkins.plugins.kubernetes.NoDelayProvisionerStrategy;
+import java.util.stream.Collectors;
+import javax.annotation.Nonnull;
 import org.csanchez.jenkins.plugins.kubernetes.ContainerEnvVar;
 import org.csanchez.jenkins.plugins.kubernetes.ContainerTemplate;
 import org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud;
+import org.csanchez.jenkins.plugins.kubernetes.KubernetesComputer;
 import org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil;
 import org.csanchez.jenkins.plugins.kubernetes.PodTemplate;
 import org.csanchez.jenkins.plugins.kubernetes.model.KeyValueEnvVar;
@@ -76,7 +81,8 @@ public abstract class AbstractKubernetesPipelineTest {
     public LoggerRule logs = new LoggerRule()
             .recordPackage(KubernetesCloud.class, Level.FINE)
             .recordPackage(NoDelayProvisionerStrategy.class, Level.FINE)
-            .record(NodeProvisioner.class, Level.FINE);
+            .record(NodeProvisioner.class, Level.FINE)
+            .record(KubernetesAgentErrorCondition.class, Level.FINE);
 
     @BeforeClass
     public static void isKubernetesConfigured() throws Exception {
@@ -148,7 +154,7 @@ public abstract class AbstractKubernetesPipelineTest {
         cloud.getTemplates().clear();
         cloud.addTemplate(buildBusyboxTemplate("busybox"));
 
-        setupHost();
+        setupHost(cloud);
 
         r.jenkins.clouds.add(cloud);
 
@@ -196,5 +202,17 @@ public abstract class AbstractKubernetesPipelineTest {
             client.namespaces().createOrReplace(
                     new NamespaceBuilder().withNewMetadata().withName(namespace).endMetadata().build());
         }
+    }
+
+    protected static List<PodTemplate> podTemplatesWithLabel(String label, List<PodTemplate> templates) {
+        return templates.stream().filter(t -> label.equals(t.getLabel())).collect(Collectors.toList());
+    }
+
+    @Nonnull
+    protected List<KubernetesComputer> getKubernetesComputers() {
+        return Arrays.stream(r.jenkins.getComputers())
+                .filter(c -> c instanceof KubernetesComputer)
+                .map(KubernetesComputer.class::cast)
+                .collect(Collectors.toList());
     }
 }

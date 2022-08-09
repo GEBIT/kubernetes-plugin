@@ -24,16 +24,41 @@
 
 package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 
-import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.*;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.arrayContaining;
-import static org.hamcrest.Matchers.containsString;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import hudson.EnvVars;
+import hudson.Launcher;
+import hudson.Launcher.DummyLauncher;
+import hudson.Launcher.ProcStarter;
+import hudson.model.Computer;
+import hudson.model.Node;
+import hudson.slaves.DumbSlave;
+import hudson.util.StreamTaskListener;
+import io.fabric8.kubernetes.api.model.ContainerBuilder;
+import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.PodBuilder;
+import io.fabric8.kubernetes.client.HttpClientAware;
+import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
+import io.fabric8.kubernetes.client.http.WebSocketHandshakeException;
+import org.apache.commons.io.output.TeeOutputStream;
+import org.apache.commons.lang.RandomStringUtils;
+import org.apache.commons.lang.StringUtils;
+import org.csanchez.jenkins.plugins.kubernetes.KubernetesClientProvider;
+import org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud;
+import org.csanchez.jenkins.plugins.kubernetes.KubernetesSlave;
+import org.csanchez.jenkins.plugins.kubernetes.PodTemplate;
+import org.jenkinsci.plugins.workflow.steps.StepContext;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.ExpectedException;
+import org.junit.rules.TestName;
+import org.junit.rules.Timeout;
+import org.jvnet.hudson.test.Issue;
+import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.LoggerRule;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
@@ -48,43 +73,19 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
-import hudson.EnvVars;
-import hudson.model.Computer;
-import hudson.model.TaskListener;
-import io.fabric8.kubernetes.client.KubernetesClientException;
-import io.fabric8.kubernetes.client.Watch;
-import org.apache.commons.io.output.TeeOutputStream;
-import org.apache.commons.lang.RandomStringUtils;
-import org.apache.commons.lang.StringUtils;
-import org.csanchez.jenkins.plugins.kubernetes.AllContainersRunningPodWatcher;
-import org.csanchez.jenkins.plugins.kubernetes.KubernetesClientProvider;
-import org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud;
-import org.csanchez.jenkins.plugins.kubernetes.KubernetesSlave;
-import org.csanchez.jenkins.plugins.kubernetes.PodTemplate;
-import org.jenkinsci.plugins.workflow.steps.StepContext;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.ExpectedException;
-import org.junit.rules.TestName;
-import org.junit.rules.Timeout;
-import org.jvnet.hudson.test.Issue;
-import org.jvnet.hudson.test.LoggerRule;
-
-import hudson.Launcher;
-import hudson.Launcher.DummyLauncher;
-import hudson.Launcher.ProcStarter;
-import hudson.model.Node;
-import hudson.util.StreamTaskListener;
-import io.fabric8.kubernetes.api.model.ContainerBuilder;
-import io.fabric8.kubernetes.api.model.Pod;
-import io.fabric8.kubernetes.api.model.PodBuilder;
-import io.fabric8.kubernetes.client.HttpClientAware;
-import io.fabric8.kubernetes.client.KubernetesClient;
-import okhttp3.OkHttpClient;
-import org.junit.Ignore;
+import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.assumeKubernetes;
+import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.deletePods;
+import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.getLabels;
+import static org.csanchez.jenkins.plugins.kubernetes.KubernetesTestUtil.setupCloud;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.arrayContaining;
+import static org.hamcrest.Matchers.isA;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * @author Carlos Sanchez
@@ -93,6 +94,9 @@ public class ContainerExecDecoratorTest {
     @Rule
     public ExpectedException exception = ExpectedException.none();
 
+    @Rule
+    public JenkinsRule j = new JenkinsRule();
+
     private KubernetesCloud cloud;
     private static KubernetesClient client;
     private static final Pattern PID_PATTERN = Pattern.compile("^((?:\\[\\d+\\] )?pid is \\d+)$", Pattern.MULTILINE);
@@ -100,6 +104,7 @@ public class ContainerExecDecoratorTest {
     private ContainerExecDecorator decorator;
     private Pod pod;
     private KubernetesSlave agent;
+    private DumbSlave dumbAgent;
 
     @Rule
     public Timeout timeout = new Timeout(3, TimeUnit.MINUTES);
@@ -150,11 +155,7 @@ public class ContainerExecDecoratorTest {
                 .endSpec().build());
 
         System.out.println("Created pod: " + pod.getMetadata().getName());
-        AllContainersRunningPodWatcher watcher = new AllContainersRunningPodWatcher(client, pod, TaskListener.NULL);
-        try (Watch w1 = client.pods().withName(podName).watch(watcher);) {
-            assert watcher != null; // assigned 3 lines above
-            watcher.await(30, TimeUnit.SECONDS);
-        }
+        client.pods().withName(podName).waitUntilReady(30, TimeUnit.SECONDS);
         PodTemplate template = new PodTemplate();
         template.setName(pod.getMetadata().getName());
         agent = mock(KubernetesSlave.class);
@@ -330,7 +331,7 @@ public class ContainerExecDecoratorTest {
     public void testContainerDoesNotExist() throws Exception {
         decorator.setContainerName("doesNotExist");
         exception.expect(KubernetesClientException.class);
-        exception.expectMessage(containsString("container doesNotExist is not valid for pod"));
+        exception.expectCause(isA(WebSocketHandshakeException.class));
         execCommand(false, false, "nohup", "sh", "-c", "sleep 5; return 127");
     }
 
@@ -347,19 +348,12 @@ public class ContainerExecDecoratorTest {
     @Issue("JENKINS-55392")
     public void testRejectedExecutionException() throws Exception {
         assertTrue(client instanceof HttpClientAware);
-        OkHttpClient httpClient = ((HttpClientAware) client).getHttpClient();
-        System.out.println("Max requests: " + httpClient.dispatcher().getMaxRequests() + "/"
-                + httpClient.dispatcher().getMaxRequestsPerHost());
-        System.out.println("Connection count: " + httpClient.connectionPool().connectionCount() + " - "
-                + httpClient.connectionPool().idleConnectionCount());
         List<Thread> threads = new ArrayList<>();
         final AtomicInteger errors = new AtomicInteger(0);
         for (int i = 0; i < 10; i++) {
             final String name = "Thread " + i;
             Thread t = new Thread(() -> {
                 try {
-                    System.out.println(name + " Connection count: " + httpClient.connectionPool().connectionCount()
-                            + " - " + httpClient.connectionPool().idleConnectionCount());
                     ProcReturn r = execCommand(false, false, "echo", "test");
                 } catch (Exception e) {
                     errors.incrementAndGet();
@@ -381,8 +375,6 @@ public class ContainerExecDecoratorTest {
                 throw new RuntimeException(e);
             }
         });
-        System.out.println("Connection count: " + httpClient.connectionPool().connectionCount() + " - "
-                + httpClient.connectionPool().idleConnectionCount());
         assertEquals("Errors in threads", 0, errors.get());
     }
 
@@ -422,6 +414,23 @@ public class ContainerExecDecoratorTest {
                 r.output.contains("MyCustomDir=/home/jenkins/agent1"));
         assertEquals(0, r.exitCode);
         assertFalse(r.proc.isAlive());
+    }
+
+    /**
+     * Reproduce JENKINS-66986
+     *
+     * Allow non KubernetesSlave nodes to be provisioned inside the container clause
+     *
+     * @throws Exception
+     */
+    @Test
+    @Issue("JENKINS-66986")
+    public void testRunningANonKubernetesNodeInsideContainerClause() throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        DummyLauncher dummyLauncher = new DummyLauncher(new StreamTaskListener(new TeeOutputStream(out, System.out)));
+        dumbAgent = j.createSlave("test", "", null);
+        Launcher launcher = decorator.decorate(dummyLauncher, dumbAgent);
+        assertEquals(dummyLauncher, launcher);
     }
 
     private ProcReturn execCommand(boolean quiet, boolean launcherStdout, String... cmd) throws Exception {

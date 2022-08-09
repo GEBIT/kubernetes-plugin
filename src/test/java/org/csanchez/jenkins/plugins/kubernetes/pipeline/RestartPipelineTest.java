@@ -128,7 +128,7 @@ public class RestartPipelineTest {
         cloud.getTemplates().clear();
         cloud.addTemplate(buildBusyboxTemplate("busybox"));
 
-        setupHost();
+        setupHost(cloud);
 
         story.j.jenkins.clouds.add(cloud);
     }
@@ -217,7 +217,7 @@ public class RestartPipelineTest {
 
     @Test
     public void windowsRestart() throws Exception {
-        assumeWindows();
+        assumeWindows(WINDOWS_1809_BUILD);
         AtomicReference<String> projectName = new AtomicReference<>();
         story.then(r -> {
             configureAgentListener();
@@ -248,12 +248,6 @@ public class RestartPipelineTest {
         story.then(r -> {
             WorkflowRun b = r.jenkins.getItemByFullName(projectName.get(), WorkflowJob.class).getBuildByNumber(1);
             r.waitForMessage("Ready to run", b);
-            // Note that the test is cheating here slightly.
-            // The watch in Reaper is still running across the in-JVM restarts,
-            // whereas in production it would have been cancelled during the shutdown.
-            // But it does not matter since we are waiting for the agent to come back online after the restart,
-            // which is sufficient trigger to reactivate the reaper.
-            // Indeed we get two Reaper instances running, which independently remove the node.
             deletePods(cloud.connect(), getLabels(this, name), false);
             r.assertBuildStatus(Result.ABORTED, r.waitForCompletion(b));
             r.waitForMessage(new ExecutorStepExecution.RemovedNodeCause().getShortDescription(), b);

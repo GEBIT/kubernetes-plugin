@@ -24,6 +24,10 @@
 
 package org.csanchez.jenkins.plugins.kubernetes;
 
+import hudson.util.IOUtils;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -32,7 +36,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -96,19 +99,41 @@ public class PodTemplateBuilder {
     private static final Pattern SPLIT_IN_SPACES = Pattern.compile("([^\"]\\S*|\".+?\")\\s*");
 
     public static final String WORKSPACE_VOLUME_NAME = "workspace-volume";
+    public static final Pattern FROM_DIRECTIVE = Pattern.compile("^FROM (.*)$");
     private static final VolumeMount DEFAULT_WORKSPACE_VOLUME_MOUNT = new VolumeMountBuilder()
             .withName(WORKSPACE_VOLUME_NAME)
             .withReadOnly(false)
             .build();
 
-
     @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "tests")
     @Restricted(NoExternalUse.class)
     static String DEFAULT_JNLP_DOCKER_REGISTRY_PREFIX = System
             .getProperty(PodTemplateStepExecution.class.getName() + ".dockerRegistryPrefix");
+
+    private static final String defaultImageName;
+
+    static {
+        try (InputStream dockerfileStream = PodTemplateBuilder.class.getResourceAsStream("Dockerfile")) {
+            String s = IOUtils.readFirstLine(dockerfileStream, StandardCharsets.UTF_8.toString());
+            Matcher matcher = FROM_DIRECTIVE.matcher(s);
+            if (matcher.matches()) {
+                String name = matcher.group(1);
+                if (JavaSpecificationVersion.forCurrentJVM().isNewerThanOrEqualTo(JavaSpecificationVersion.JAVA_11)) {
+                    defaultImageName = name + "-jdk11";
+                } else {
+                    defaultImageName = name + "-jdk8";
+                }
+            } else {
+                throw new IllegalStateException("Dockerfile in plugin resources doesn't have the expected content");
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     @Restricted(NoExternalUse.class)
     static final String DEFAULT_JNLP_IMAGE = System
-            .getProperty(PodTemplateStepExecution.class.getName() + ".defaultImage", getDefaultImageName());
+            .getProperty(PodTemplateStepExecution.class.getName() + ".defaultImage", defaultImageName);
 
     static final String DEFAULT_JNLP_CONTAINER_MEMORY_REQUEST = System
             .getProperty(PodTemplateStepExecution.class.getName() + ".defaultContainer.defaultMemoryRequest", "256Mi");
@@ -142,15 +167,6 @@ public class PodTemplateBuilder {
         this.cloud = agent.getKubernetesCloud();
     }
 
-    private static String getDefaultImageName() {
-      // TODO: Reverse logic after inbound-agent:4.9-1
-      String name = "jenkins/inbound-agent:4.3-4";
-      if (JavaSpecificationVersion.forCurrentJVM().isNewerThanOrEqualTo(JavaSpecificationVersion.JAVA_11)) {
-        name = name + "-jdk11";
-      }
-      return name;
-    }
-
     public PodTemplateBuilder withSlave(@NonNull KubernetesSlave slave) {
         this.agent = slave;
         this.cloud = slave.getKubernetesCloud();
@@ -171,7 +187,6 @@ public class PodTemplateBuilder {
         // Build volumes and volume mounts.
         Map<String, Volume> volumes = new HashMap<>();
         Map<String, VolumeMount> volumeMounts = new HashMap<>();
-
         int i = 0;
         for (final PodVolume volume : template.getVolumes()) {
             final String volumeName = "volume-" + i;
@@ -280,6 +295,13 @@ public class PodTemplateBuilder {
         Pod pod = combine(template.getYamlsPod(), builder.endSpec().build());
 
         // Apply defaults
+        if (pod.getMetadata().getNamespace() == null) {
+            if (template.getNamespace() != null) {
+                pod.getMetadata().setNamespace(template.getNamespace());
+            } else if (cloud != null && cloud.getNamespace() != null) {
+                pod.getMetadata().setNamespace(cloud.getNamespace());
+            }
+        }
 
         // default jnlp container
         Optional<Container> jnlpOpt = pod.getSpec().getContainers().stream().filter(c -> JNLP_NAME.equals(c.getName()))
@@ -292,7 +314,9 @@ public class PodTemplateBuilder {
         pod.getSpec().getContainers().stream().filter(c -> c.getWorkingDir() == null).forEach(c -> c.setWorkingDir(jnlp.getWorkingDir()));
         if (StringUtils.isBlank(jnlp.getImage())) {
             String jnlpImage = DEFAULT_JNLP_IMAGE;
-            if (StringUtils.isNotEmpty(DEFAULT_JNLP_DOCKER_REGISTRY_PREFIX)) {
+            if (cloud != null && StringUtils.isNotEmpty(cloud.getJnlpregistry())) {
+                jnlpImage = Util.ensureEndsWith(cloud.getJnlpregistry(), "/") + jnlpImage;
+            } else if (StringUtils.isNotEmpty(DEFAULT_JNLP_DOCKER_REGISTRY_PREFIX)) {
                 jnlpImage = Util.ensureEndsWith(DEFAULT_JNLP_DOCKER_REGISTRY_PREFIX, "/") + jnlpImage;
             }
             jnlp.setImage(jnlpImage);
@@ -300,7 +324,9 @@ public class PodTemplateBuilder {
         Map<String, EnvVar> envVars = new HashMap<>();
         envVars.putAll(jnlpEnvVars(jnlp.getWorkingDir()));
         envVars.putAll(defaultEnvVars(template.getEnvVars()));
-        envVars.putAll(jnlp.getEnv().stream().collect(Collectors.toMap(EnvVar::getName, Function.identity())));
+        Optional.ofNullable(jnlp.getEnv()).ifPresent(jnlpEnv -> {
+            jnlpEnv.forEach(var -> envVars.put(var.getName(), var));
+        });
         jnlp.setEnv(new ArrayList<>(envVars.values()));
         if (jnlp.getResources() == null) {
 
