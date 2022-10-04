@@ -407,7 +407,7 @@ public class PodTemplateUtils {
         combinedVolumes.putAll(template.getVolumes().stream().collect(toMap(v -> v.getMountPath(), v -> v)));
 
         WorkspaceVolume workspaceVolume = WorkspaceVolume.merge(parent.getWorkspaceVolume(), template.getWorkspaceVolume());
-        boolean mountWorkspace = template.getMountWorkspace();
+        boolean mountWorkspace = template.isMountWorkspace();
 
         //Tool location node properties
         List<NodeProperty<?>> nodeProperties = new ArrayList<>(parent.getNodeProperties());

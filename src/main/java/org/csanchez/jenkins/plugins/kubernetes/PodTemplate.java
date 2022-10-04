@@ -154,7 +154,7 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
 
     private WorkspaceVolume workspaceVolume;
 
-    private boolean mountWorkspace = true;
+    private MountWorkspaceBlock mountWorkspace;
 
     private final List<PodVolume> volumes = new ArrayList<>();
 
@@ -202,6 +202,16 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
 
     private Boolean showRawYaml;
 
+    public static class MountWorkspaceBlock {
+        private WorkspaceVolume workspaceVolume;
+
+        @DataBoundConstructor
+        public MountWorkspaceBlock(WorkspaceVolume workspaceVolume) {
+            this.workspaceVolume = workspaceVolume;
+        }
+    }
+
+    
     /**
      * Listener of the run that created this pod template, if applicable
      */
@@ -212,17 +222,22 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
     private PodRetention podRetention;
 
     public PodTemplate() {
-        this((String) null);
+        this((String) null, (MountWorkspaceBlock) null);
     }
 
-    @DataBoundConstructor
-    public PodTemplate(@CheckForNull String id) {
+    public PodTemplate(String id) {
         if (Util.fixEmpty(id) == null) {
             this.id = UUID.randomUUID().toString();
         } else {
             this.id = id;
         }
         recomputeLabelDerivedFields();
+    }
+
+    @DataBoundConstructor
+    public PodTemplate(@CheckForNull String id, MountWorkspaceBlock mountWorkspace) {
+        this(id);
+        setMountWorkspace(mountWorkspace);
     }
 
     public PodTemplate(PodTemplate from) {
@@ -751,14 +766,31 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
         this.workspaceVolume = WorkspaceVolume.getDefault().equals(workspaceVolume) ? null : workspaceVolume;
     }
 
-    @NonNull
-    public boolean getMountWorkspace() {
-        return mountWorkspace;
+    public boolean isMountWorkspace() {
+        return mountWorkspace != null;
+    }
+
+    public void setMountWorkspace(boolean mountWorkspace) {
+        if (mountWorkspace) {
+            if (this.workspaceVolume != null) {
+                this.mountWorkspace = new MountWorkspaceBlock(this.workspaceVolume);
+            } else {
+                this.mountWorkspace = new MountWorkspaceBlock(WorkspaceVolume.getDefault());
+                this.workspaceVolume = WorkspaceVolume.getDefault();
+            }
+        } else {
+            this.mountWorkspace = null;
+        }
     }
 
     @DataBoundSetter
-    public void setMountWorkspace(Boolean mountWorkspace) {
-        this.mountWorkspace = mountWorkspace;
+    public void setMountWorkspace(MountWorkspaceBlock mountWorkspaceBlock) {
+        if (mountWorkspaceBlock != null) {
+            this.mountWorkspace = mountWorkspaceBlock;
+            this.workspaceVolume = mountWorkspaceBlock.workspaceVolume;
+        } else {
+            this.mountWorkspace = null;
+        }
     }
 
     @DataBoundSetter

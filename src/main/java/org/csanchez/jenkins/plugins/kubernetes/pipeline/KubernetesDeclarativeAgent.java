@@ -295,6 +295,19 @@ public class KubernetesDeclarativeAgent extends RetryableDeclarativeAgent<Kubern
         this.yamlMergeStrategy = yamlMergeStrategy;
     }
 
+    @DataBoundSetter
+    public void setMountWorkspace(Boolean mountWorkspace) {
+        this.mountWorkspace = mountWorkspace;
+    }
+
+    public boolean isMountWorkspace() {
+        return isMountWorkspaceSet() ? mountWorkspace.booleanValue() : true;
+    }
+
+    public boolean isMountWorkspaceSet() {
+        return mountWorkspace != null;
+    }
+
     public WorkspaceVolume getWorkspaceVolume() {
         return workspaceVolume == null ? PodTemplateStep.DescriptorImpl.defaultWorkspaceVolume : this.workspaceVolume;
     }
@@ -302,15 +315,6 @@ public class KubernetesDeclarativeAgent extends RetryableDeclarativeAgent<Kubern
     @DataBoundSetter
     public void setWorkspaceVolume(WorkspaceVolume workspaceVolume) {
         this.workspaceVolume = (workspaceVolume == null || workspaceVolume.equals(PodTemplateStep.DescriptorImpl.defaultWorkspaceVolume)) ? null : workspaceVolume;
-    }
-
-    public boolean getMountWorkspace() {
-        return mountWorkspace == null ? true : mountWorkspace;
-    }
-
-    @DataBoundSetter
-    public void setMountWorkspace(Boolean mountWorkspace) {
-        this.mountWorkspace = mountWorkspace;
     }
 
     @DataBoundSetter

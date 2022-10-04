@@ -41,6 +41,7 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.NonNull;
@@ -208,7 +209,7 @@ public class PodTemplateBuilder {
             }
         }
 
-        if (template.getMountWorkspace()) {
+        if (template.isMountWorkspace()) {
             volumes.put(WORKSPACE_VOLUME_NAME, template.getWorkspaceVolume().buildVolume(WORKSPACE_VOLUME_NAME, agent != null ? agent.getPodName() : null));
         }
 
@@ -216,7 +217,7 @@ public class PodTemplateBuilder {
         // containers from pod template
         for (ContainerTemplate containerTemplate : template.getContainers()) {
             containers.put(containerTemplate.getName(),
-                    createContainer(containerTemplate, template.getEnvVars(), volumeMounts.values(), template.getMountWorkspace()));
+                    createContainer(containerTemplate, template.getEnvVars(), volumeMounts.values(), template.isMountWorkspace()));
         }
 
         MetadataNested<PodBuilder> metadataBuilder = new PodBuilder().withNewMetadata();
@@ -352,10 +353,12 @@ public class PodTemplateBuilder {
 
         }
 
-        if (template.getMountWorkspace()) {
+        if (template.isMountWorkspace()) {
             // moved this from DefaultWorkspaceVolume decorator to here, so mountWorkspace can be checked
+            // for all containers and initContainers
+
             // default workspace volume mount. If something is already mounted in the same path ignore it
-            pod.getSpec().getContainers().stream()
+            Stream.concat(pod.getSpec().getContainers().stream(), pod.getSpec().getInitContainers().stream())
                     .filter(c -> c.getVolumeMounts().stream()
                             .noneMatch(vm -> vm.getMountPath().equals(
                                     getWorkspaceMountPath(c))))
@@ -367,6 +370,18 @@ public class PodTemplateBuilder {
                         );
                         c.setVolumeMounts(mounts);
                     });
+            LOGGER.fine("Added default workspace volume to all containers");
+        } else {
+            // mountWorkspace is disabled, remove workspace mount from all containers
+            Stream.concat(pod.getSpec().getContainers().stream(), pod.getSpec().getInitContainers().stream())
+                .filter(c -> c.getVolumeMounts().stream()
+                    .anyMatch(vm -> vm.getName().equals(WORKSPACE_VOLUME_NAME)))
+                .forEach(c -> {
+                    c.getVolumeMounts().removeIf(vm -> vm.getName().equals(WORKSPACE_VOLUME_NAME));
+                });
+            // also remove volume itself
+            pod.getSpec().getVolumes().removeIf(v -> v.getName().equals(WORKSPACE_VOLUME_NAME));
+            LOGGER.fine("Removed default workspace volume from all containers");
         }
 
         if (cloud != null) {

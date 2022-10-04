@@ -183,8 +183,9 @@ public final class KubernetesProvisioningLimits {
 
         final Pod pod;
         try {
-            // use the PodTemplateBuilder without a node to get a template combined with its parents
-            PodTemplateBuilder builder = new PodTemplateBuilder(podTemplate);
+            KubernetesCloud cloud = (KubernetesCloud) Jenkins.get().getCloud("kubernetes");
+            // use getUnwrappedTemplate() and PodTemplateBuilder without a node to get a template combined with its parents
+            PodTemplateBuilder builder = new PodTemplateBuilder(cloud.getUnwrappedTemplate(podTemplate));
             pod = builder.build();
             LOGGER.log(Level.FINEST, () -> "built slavePod with PodTemplateBuilder for resource request checking:\n" + pod.toString());
 

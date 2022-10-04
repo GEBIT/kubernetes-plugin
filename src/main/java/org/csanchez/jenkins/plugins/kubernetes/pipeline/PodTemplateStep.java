@@ -202,6 +202,19 @@ public class PodTemplateStep extends Step implements Serializable {
         this.volumes = volumes;
     }
 
+    @DataBoundSetter
+    public void setMountWorkspace(Boolean mountWorkspace) {
+        this.mountWorkspace = mountWorkspace;
+    }
+
+    public boolean isMountWorkspace() {
+        return isMountWorkspaceSet() ? mountWorkspace.booleanValue() : true;
+    }
+
+    public boolean isMountWorkspaceSet() {
+        return mountWorkspace != null;
+    }
+
     @CheckForNull
     public WorkspaceVolume getWorkspaceVolume() {
         return workspaceVolume == null ? DescriptorImpl.defaultWorkspaceVolume : this.workspaceVolume;
@@ -210,15 +223,6 @@ public class PodTemplateStep extends Step implements Serializable {
     @DataBoundSetter
     public void setWorkspaceVolume(@CheckForNull WorkspaceVolume workspaceVolume) {
         this.workspaceVolume = (workspaceVolume == null || workspaceVolume.equals(DescriptorImpl.defaultWorkspaceVolume)) ? null : workspaceVolume;
-    }
-
-    public Boolean getMountWorkspace() {
-        return mountWorkspace;
-    }
-
-    @DataBoundSetter
-    public void setMountWorkspace(boolean mountWorkspace) {
-        this.mountWorkspace = mountWorkspace;
     }
 
     public Integer getInstanceCap() {

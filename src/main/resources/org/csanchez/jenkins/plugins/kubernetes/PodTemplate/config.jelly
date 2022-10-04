@@ -107,13 +107,11 @@
       <f:textbox/>
     </f:entry>
 
-    <f:entry field="mountWorkspace" title="${%Mount Workspace}">
-      <f:checkbox default="true"/>
-    </f:entry>
-
-    <f:entry title="${%Workspace Volume}" field="workspaceVolume">
-      <f:dropdownDescriptorSelector field="workspaceVolume" default="${descriptor.defaultWorkspaceVolume}"/>
-    </f:entry>
+    <f:optionalBlock name="mountWorkspace" field="mountWorkspace" title="${%Mount Workspace}">
+        <f:entry title="${%Workspace Volume}">
+          <f:dropdownDescriptorSelector field="workspaceVolume" default="${descriptor.defaultWorkspaceVolume}"/>
+        </f:entry>
+    </f:optionalBlock>
 
     <f:descriptorList title="${%Node Properties}" descriptors="${h.getNodePropertyDescriptors(descriptor.clazz)}" field="nodeProperties" />
 
