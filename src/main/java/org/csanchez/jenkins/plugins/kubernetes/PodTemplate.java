@@ -222,7 +222,7 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
     private PodRetention podRetention;
 
     public PodTemplate() {
-        this((String) null, (MountWorkspaceBlock) null);
+        this((String) null, new MountWorkspaceBlock(WorkspaceVolume.getDefault()));
     }
 
     public PodTemplate(String id) {
@@ -1097,6 +1097,7 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
                 (resourceLimitCpu == null ? "" : ", resourceLimitCpu='" + resourceLimitCpu + '\'') +
                 (resourceLimitMemory == null ? "" : ", resourceLimitMemory='" + resourceLimitMemory + '\'') +
                 (resourceLimitEphemeralStorage == null ? "" : ", resourceLimitEphemeralStorage='" + resourceLimitEphemeralStorage + '\'') +
+                (", mountWorkspace='" + isMountWorkspace() + '\'') +
                 (workspaceVolume == null ? "" : ", workspaceVolume='" + workspaceVolume + '\'') +
                 (podRetention == null ? "" : ", podRetention='" + podRetention + '\'') +
                 (volumes == null || volumes.isEmpty() ? "" : ", volumes=" + volumes) +

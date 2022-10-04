@@ -2,6 +2,7 @@ package org.csanchez.jenkins.plugins.kubernetes;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.util.ArrayList;
@@ -65,7 +66,8 @@ public class KubernetesCloudTest {
         HtmlPage p = wc.goTo("configureClouds/");
         HtmlForm f = p.getFormByName("config");
         j.submit(f);
-        assertEquals("PodTemplate{id='"+podTemplate.getId()+"', name='test-template', label='test'}", podTemplate.toString());
+        assertTrue(podTemplate.toString().startsWith(
+                "PodTemplate{id='"+podTemplate.getId()+"', name='test-template', label='test', mountWorkspace='true', workspaceVolume='org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.HostPathWorkspaceVolume"));
     }
 
     @Test
