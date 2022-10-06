@@ -202,7 +202,10 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
 
     private Boolean showRawYaml;
 
-    public static class MountWorkspaceBlock {
+    public static class MountWorkspaceBlock implements Serializable {
+
+        private static final long serialVersionUID = 1L;
+
         private WorkspaceVolume workspaceVolume;
 
         @DataBoundConstructor

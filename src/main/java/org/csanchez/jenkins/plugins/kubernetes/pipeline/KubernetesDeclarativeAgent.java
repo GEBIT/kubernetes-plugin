@@ -301,11 +301,7 @@ public class KubernetesDeclarativeAgent extends RetryableDeclarativeAgent<Kubern
     }
 
     public boolean isMountWorkspace() {
-        return isMountWorkspaceSet() ? mountWorkspace.booleanValue() : true;
-    }
-
-    public boolean isMountWorkspaceSet() {
-        return mountWorkspace != null;
+        return mountWorkspace != null? mountWorkspace.booleanValue() : true;
     }
 
     public WorkspaceVolume getWorkspaceVolume() {
