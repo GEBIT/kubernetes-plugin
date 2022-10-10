@@ -159,22 +159,28 @@ public final class KubernetesProvisioningLimits {
      * @param pod The pod to check.
      *
      * @throws IllegalArgumentException if a resource request is not parseable or
-     *                                  if a resource request is 0 in total over all containers.
+     *                                  if a resource request is 0 in any container.
      */
     private void checkPodResourceReqs(@NonNull Pod pod) {
-        Double cpuReq = 0.0;
-        Double memReq = 0.0;
         for (Container containerTemplate : pod.getSpec().getContainers()) {
             Quantity cpuReqQ = containerTemplate.getResources().getRequests().get("cpu");
+            if (cpuReqQ != null) {
+                double cpuReq = Double.parseDouble(cpuReqQ.getAmount());
+                if (cpuReq == 0.0) {
+                    throw new IllegalArgumentException("NULL_CPU_REQUEST in container " + containerTemplate.getName());
+                }
+            } else {
+                throw new IllegalArgumentException("NULL_CPU_REQUEST in container " + containerTemplate.getName());
+            }
             Quantity memReqQ = containerTemplate.getResources().getRequests().get("memory");
-            cpuReq += Double.parseDouble(cpuReqQ.getAmount());
-            memReq += Double.parseDouble(memReqQ.getAmount());
-        }
-        if (cpuReq == 0.0) {
-            throw new IllegalArgumentException("NULL_CPU_REQUEST");
-        }
-        if (memReq == 0.0) {
-            throw new IllegalArgumentException("NULL_MEM_REQUEST");
+            if (memReqQ != null) {
+                double memReq = Double.parseDouble(memReqQ.getAmount());
+                if (memReq == 0.0) {
+                    throw new IllegalArgumentException("NULL_MEM_REQUEST in container " + containerTemplate.getName());
+                }
+            } else {
+                throw new IllegalArgumentException("NULL_MEM_REQUEST in container " + containerTemplate.getName());
+            }
         }
     }
 
