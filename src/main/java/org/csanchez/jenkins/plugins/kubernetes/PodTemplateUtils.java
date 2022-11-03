@@ -495,9 +495,12 @@ public class PodTemplateUtils {
             PodTemplate parent = null;
             for (String name : inheritFrom) {
                 PodTemplate next = getTemplateByName(name, allTemplates);
-                if (next != null) {
-                    parent = combine(parent, unwrap(next, allTemplates));
-                }
+                if (next == null) {
+					String message = "Template \"" + template.getName() + "\" defines a non existing 'inheritFrom' template \"" + name + "\"";
+					LOGGER.severe(message);
+					throw new IllegalArgumentException(message);
+				}
+                parent = combine(parent, unwrap(next, allTemplates));
             }
             PodTemplate combined = combine(parent, template);
             combined.setUnwrapped(true);

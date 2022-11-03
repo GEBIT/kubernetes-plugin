@@ -812,4 +812,32 @@ public class PodTemplateUtilsTest {
         PodTemplateUtils.parseFromYaml(null);
         PodTemplateUtils.parseFromYaml("");
     }
+    
+    @Test
+    public void shouldFailWhenInheritFromTemplateNotExists() {
+    	PodTemplate parent = new PodTemplate();
+        parent.setName("parent");
+        parent.setLabel("parent");
+        parent.setServiceAccount("sa");
+        parent.setNodeSelector("key:value");
+        parent.setImagePullSecrets(asList(SECRET_1));
+        parent.setYaml("Yaml");
+
+        PodTemplate template1 = new PodTemplate();
+        template1.setName("template1");
+        template1.setInheritFrom("parent");
+        template1.setServiceAccount("sa1");
+        template1.setImagePullSecrets(asList(SECRET_2, SECRET_3));
+        template1.setYaml("Yaml2");
+        
+        // test the old functionality at first
+        PodTemplate result = unwrap(template1, asList(parent, template1));
+        assertEquals(template1.getServiceAccount(), result.getServiceAccount());
+        
+        // test the new error case
+        template1.setInheritFrom("notExistingParent");
+		assertThrows(IllegalArgumentException.class, () -> {
+			unwrap(template1, asList(parent, template1));
+		});
+    }
 }
