@@ -49,9 +49,21 @@
     <no-test-jar>false</no-test-jar>
     <useBeta>true</useBeta>
     <gitHubRepo>jenkinsci/${project.artifactId}-plugin</gitHubRepo>
-    <version.tiles>2.8-gebit37</version.tiles>
+    
+    <!-- Version of the project (same as in version tag). -->
+    <version.kubernetes>${changelist}</version.kubernetes>
+    <version.property>version.kubernetes</version.property>
+    
+    <project.build-name>kubernetes</project.build-name>
+    <project.jira>DINF</project.jira>
+    
+    <!-- Version of gebit-build to be used -->
     <version.build>3.4.0</version.build>
-    <version.gitflow-maven-plugin>2.4.2</version.gitflow-maven-plugin>
+    <version.gebit-build-extension>1.2.2</version.gebit-build-extension>
+    <version.tiles>2.8-gebit37</version.tiles>
+    
+    <tiles.applyBefore>org.csanchez.jenkins.plugins:kubernetes</tiles.applyBefore>
+    <tiles.mergeTarget>${tiles.applyBefore}</tiles.mergeTarget>
   </properties>
 
   <dependencies>
@@ -319,22 +331,27 @@
           </systemProperties>
         </configuration>
       </plugin>
-      <plugin>
-      	<groupId>io.repaint.maven</groupId>
-        <artifactId>tiles-maven-plugin</artifactId>
-        <version>${version.tiles}</version>
-        <configuration>
-        	<tiles combine.children="append">
-            	<tile>de.gebit.build.tile:build:${version.build}</tile>
-            </tiles>
-        </configuration>
-      </plugin>
-      <plugin>
-      	<groupId>de.gebit.build.maven</groupId>
-		<artifactId>gitflow-maven-plugin</artifactId>
-		<version>${version.gitflow-maven-plugin}</version>
-      </plugin>
+	  <plugin>
+		<groupId>io.repaint.maven</groupId>
+		<artifactId>tiles-maven-plugin</artifactId>
+		<version>${version.tiles}</version>
+		<extensions>true</extensions>
+		<configuration>
+			<applyBefore>${tiles.applyBefore}</applyBefore>
+			<mergeTarget>${tiles.mergeTarget}</mergeTarget>
+			<tiles combine.children="append">
+				<tile>de.gebit.build.tile:build:${version.build}</tile>
+			</tiles>
+		</configuration>
+	  </plugin>
     </plugins>
+    <extensions>
+        <extension>
+            <groupId>de.gebit.build.maven</groupId>
+            <artifactId>gebit-build-extension</artifactId>
+            <version>${version.gebit-build-extension}</version>
+        </extension>
+    </extensions>
   </build>
 
   <!-- get every artifact through repo.jenkins-ci.org, which proxies all the artifacts that we need -->
