@@ -12,3 +12,4 @@ nb-configuration.xml
 /.vscode/
 **/.DS_Store
 .java-version
+.sdkmanrc
