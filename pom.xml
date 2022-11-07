@@ -49,6 +49,9 @@
     <no-test-jar>false</no-test-jar>
     <useBeta>true</useBeta>
     <gitHubRepo>jenkinsci/${project.artifactId}-plugin</gitHubRepo>
+    <version.tiles>2.8-gebit37</version.tiles>
+    <version.build>3.4.0</version.build>
+    <version.gitflow-maven-plugin>2.4.2</version.gitflow-maven-plugin>
   </properties>
 
   <dependencies>
@@ -315,6 +318,21 @@
             <org.csanchez.jenkins.plugins.kubernetes.pipeline.PodTemplateStepExecution.verbose>true</org.csanchez.jenkins.plugins.kubernetes.pipeline.PodTemplateStepExecution.verbose>
           </systemProperties>
         </configuration>
+      </plugin>
+      <plugin>
+      	<groupId>io.repaint.maven</groupId>
+        <artifactId>tiles-maven-plugin</artifactId>
+        <version>${version.tiles}</version>
+        <configuration>
+        	<tiles combine.children="append">
+            	<tile>de.gebit.build.tile:build:${version.build}</tile>
+            </tiles>
+        </configuration>
+      </plugin>
+      <plugin>
+      	<groupId>de.gebit.build.maven</groupId>
+		<artifactId>gitflow-maven-plugin</artifactId>
+		<version>${version.gitflow-maven-plugin}</version>
       </plugin>
     </plugins>
   </build>
