@@ -1,0 +1,19 @@
+@Library('gebit-jenkins@latest') _
+
+buildPipeline(this) {
+
+    jobProperties = pipelineContext.jobProperties()
+    jobType = pipelineContext.jobType()
+
+    stage('Checkout') {
+        checkoutProject()
+    }
+
+    stage('Prepare') {
+    	prepareProject()
+    }
+
+    stage('Build') {
+        buildProject()
+    }
+}
