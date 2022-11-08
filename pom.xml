@@ -65,6 +65,33 @@
     <tiles.applyBefore>org.csanchez.jenkins.plugins:kubernetes</tiles.applyBefore>
     <tiles.mergeTarget>${tiles.applyBefore}</tiles.mergeTarget>
   </properties>
+  
+  <!-- Disable jenkins-ci repo -->
+	<repositories>
+		<repository>
+			<id>repo.jenkins-ci.org</id>
+			<releases>
+			    <!-- Enable because some dependencies are not available in jenkins-ci releases proxied in gebit nexus -->
+				<enabled>true</enabled>
+			</releases>
+			<snapshots>
+				<enabled>false</enabled>
+			</snapshots>
+			<url>https://repo.jenkins-ci.org/public/</url>
+		</repository>
+	</repositories>
+	<pluginRepositories>
+		<pluginRepository>
+			<id>repo.jenkins-ci.org</id>
+			<releases>
+				<enabled>false</enabled>
+			</releases>
+			<snapshots>
+				<enabled>false</enabled>
+			</snapshots>
+			<url>none</url>
+		</pluginRepository>
+	</pluginRepositories>
 
   <dependencies>
     <dependency>
