@@ -9,10 +9,6 @@ buildPipeline(this) {
         checkoutProject()
     }
 
-    stage('Prepare') {
-    	prepareProject()
-    }
-
     stage('Build') {
         buildProject()
     }
