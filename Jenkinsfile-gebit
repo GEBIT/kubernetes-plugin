@@ -1,4 +1,4 @@
-@Library('gebit-jenkins@latest') _
+@Library('gebit-jenkins@feature/GBLD-1023') _
 
 buildPipeline(this) {
 
