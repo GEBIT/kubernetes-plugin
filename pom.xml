@@ -104,7 +104,7 @@
     <dependency>
       <groupId>org.jenkins-ci.plugins.workflow</groupId>
       <artifactId>workflow-api</artifactId>
-      <version>1200.v8005c684b_a_c6</version> <!-- TODO until in BOM -->
+      <version>1208.v0cc7c6e0da_9e</version> <!-- TODO until in BOM -->
     </dependency>
     <dependency> <!-- DeclarativeAgent -->
       <groupId>org.jenkinsci.plugins</groupId>
