@@ -13,13 +13,13 @@
   <name>Kubernetes plugin</name>
   <description>Jenkins plugin to run dynamic agents in a Kubernetes cluster</description>
   <packaging>hpi</packaging>
-  <url>https://github.com/GEBIT/kubernetes-plugin</url>
+  <url>https://github.com/jenkinsci/${project.artifactId}-plugin</url>
 
   <scm>
-    <connection>scm:git:git@github.com:GEBIT/kubernetes-plugin.git</connection>
-    <developerConnection>scm:git:git@github.com:GEBIT/kubernetes-plugin.git</developerConnection>
-    <url>https://github.com/GEBIT/kubernetes-plugin</url>
-    <tag>gebit</tag>
+    <connection>scm:git:https://github.com/${gitHubRepo}.git</connection>
+    <developerConnection>scm:git:https://github.com/${gitHubRepo}.git</developerConnection>
+    <url>https://github.com/${gitHubRepo}</url>
+    <tag>${scmTag}</tag>
   </scm>
 
   <licenses>
@@ -50,20 +50,11 @@
     <useBeta>true</useBeta>
     <gitHubRepo>jenkinsci/${project.artifactId}-plugin</gitHubRepo>
     
-    <!-- Version of the project (same as in version tag). -->
-    <version.kubernetes>${changelist}</version.kubernetes>
-    <version.property>version.kubernetes</version.property>
-    
-    <project.build-name>kubernetes</project.build-name>
-    <project.jira>DINF</project.jira>
-    
-    <!-- Version of gebit-build to be used -->
-    <version.build>3.4.0</version.build>
-    <version.gebit-build-extension>1.2.2</version.gebit-build-extension>
+    <!-- GEBIT: versions to be used for gebit-build support -->
     <version.tiles>2.8-gebit37</version.tiles>
-    
-    <tiles.applyBefore>org.csanchez.jenkins.plugins:kubernetes</tiles.applyBefore>
-    <tiles.mergeTarget>${tiles.applyBefore}</tiles.mergeTarget>
+    <version.gebit-build-extension>1.2.2</version.gebit-build-extension>
+    <version.gebit-forked>1.0.0</version.gebit-forked>
+    <!-- GEBIT: end -->
   </properties>
   
   <dependencies>
@@ -323,10 +314,8 @@
 		<version>${version.tiles}</version>
 		<extensions>true</extensions>
 		<configuration>
-			<applyBefore>${tiles.applyBefore}</applyBefore>
-			<mergeTarget>${tiles.mergeTarget}</mergeTarget>
 			<tiles combine.children="append">
-				<tile>de.gebit.build.tile:build:${version.build}</tile>
+				<tile>de.gebit.build.forked.tile:jenkins-plugin:${version.gebit-forked}</tile>
 			</tiles>
 		</configuration>
 	  </plugin>
@@ -345,12 +334,6 @@
     <repository>
       <id>repo.jenkins-ci.org</id>
       <url>https://repo.jenkins-ci.org/public/</url>
-      <releases>
-      	<enabled>true</enabled>
-      </releases>
-      <snapshots>
-      	<enabled>false</enabled>
-      </snapshots>
     </repository>
   </repositories>
 
@@ -358,12 +341,6 @@
     <pluginRepository>
       <id>repo.jenkins-ci.org</id>
       <url>https://repo.jenkins-ci.org/public/</url>
-      <releases>
-      	<enabled>false</enabled>
-      </releases>
-      <snapshots>
-      	<enabled>false</enabled>
-      </snapshots>
     </pluginRepository>
   </pluginRepositories>
 

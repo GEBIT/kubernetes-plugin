@@ -37,23 +37,9 @@
 			<id>gebit-maven-site</id>
 			<username>jenkins</username>
 		</server>
-
-		<!-- Jenkins repository for upstream builds need preemptive authentication. -->
-		<server>
-			<id>jenkins</id>
-			<username>${env.NEXUS_GEBIT_BUILD_USERNAME}</username>
-			<password>${env.NEXUS_GEBIT_BUILD_PASSWORD}</password>
-			<configuration>
-				<httpConfiguration>
-					<all>
-						<usePreemptive>true</usePreemptive>
-					</all>
-				</httpConfiguration>
-			</configuration>
-		</server>
 	</servers>
 
- 	<profiles>
+	<profiles>
 		<profile>
 			<id>nexus-profile</id>
 			<repositories>
@@ -143,35 +129,49 @@
 			</pluginRepositories>
 		</profile>
 
-		<!-- Order is important here: this must be last -->
 		<profile>
-			<id>jenkins-maven-upstream</id>
-			<activation>
-				<property>
-					<name>env.Jenkins.Repository</name>
-				</property>
-			</activation>
+			<id>disabled-jenkins-ci-repo-profile</id>
 			<repositories>
 				<repository>
-					<id>jenkins</id>
-					<url>${env.Jenkins.Repository}</url>
+					<id>repo.jenkins-ci.org</id>
+					<url>none</url>
 					<releases>
-						<enabled>true</enabled>
+						<enabled>false</enabled>
 					</releases>
 					<snapshots>
-						<enabled>true</enabled>
+						<enabled>false</enabled>
+					</snapshots>
+				</repository>
+				<repository>
+					<id>incrementals</id>
+					<url>none</url>
+					<releases>
+						<enabled>false</enabled>
+					</releases>
+					<snapshots>
+						<enabled>false</enabled>
 					</snapshots>
 				</repository>
 			</repositories>
 			<pluginRepositories>
 				<pluginRepository>
-					<id>jenkins</id>
-					<url>${env.Jenkins.Repository}</url>
+					<id>repo.jenkins-ci.org</id>
+					<url>none</url>
 					<releases>
-						<enabled>true</enabled>
+						<enabled>false</enabled>
 					</releases>
 					<snapshots>
-						<enabled>true</enabled>
+						<enabled>false</enabled>
+					</snapshots>
+				</pluginRepository>
+				<pluginRepository>
+					<id>incrementals</id>
+					<url>none</url>
+					<releases>
+						<enabled>false</enabled>
+					</releases>
+					<snapshots>
+						<enabled>false</enabled>
 					</snapshots>
 				</pluginRepository>
 			</pluginRepositories>
@@ -180,5 +180,6 @@
 
 	<activeProfiles>
 		<activeProfile>nexus-profile</activeProfile>
+		<activeProfile>disabled-jenkins-ci-repo-profile</activeProfile>
 	</activeProfiles>
 </settings>
