@@ -175,8 +175,12 @@ public class KubernetesLauncher extends JNLPLauncher {
                 client.pods().inNamespace(namespace).withName(podName).waitUntilReady(template.getSlaveConnectTimeout(), TimeUnit.SECONDS);
             } catch (KubernetesClientTimeoutException ex) {
                 Pod timeoutPod = client.pods().inNamespace(namespace).withName(podName).get();
-                LOGGER.log(Level.WARNING, "Timeout while waiting for pod to be ready: slaveConnectTimeout: {0}, pod:\n{1}",
-                        new Object[] {template.getSlaveConnectTimeout(), Serialization.asYaml(timeoutPod)});
+                if (timeoutPod != null) {
+                    // in rare cases (kubelet pull qps limit reached, for example)
+                    // there is still a pod left and we can log out additional info like pod status
+                    LOGGER.log(Level.WARNING, "Timeout while waiting for pod to be ready: slaveConnectTimeout: {0}, pod:\n{1}",
+                            new Object[] {template.getSlaveConnectTimeout(), Serialization.asYaml(timeoutPod)});
+                }
                 throw ex;
             }
 
