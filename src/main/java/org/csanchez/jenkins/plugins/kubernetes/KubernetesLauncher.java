@@ -37,6 +37,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.KubernetesClientTimeoutException;
 import io.fabric8.kubernetes.client.internal.readiness.Readiness;
+import io.fabric8.kubernetes.client.utils.Serialization;
 import jenkins.metrics.api.Metrics;
 import org.apache.commons.lang.StringUtils;
 import org.csanchez.jenkins.plugins.kubernetes.pod.retention.Reaper;
@@ -170,7 +171,14 @@ public class KubernetesLauncher extends JNLPLauncher {
             template.getWorkspaceVolume().createVolume(client, podMetadata);
             template.getVolumes().forEach(volume -> volume.createVolume(client, podMetadata));
 
-            client.pods().inNamespace(namespace).withName(podName).waitUntilReady(template.getSlaveConnectTimeout(), TimeUnit.SECONDS);
+            try {
+                client.pods().inNamespace(namespace).withName(podName).waitUntilReady(template.getSlaveConnectTimeout(), TimeUnit.SECONDS);
+            } catch (KubernetesClientTimeoutException ex) {
+                Pod timeoutPod = client.pods().inNamespace(namespace).withName(podName).get();
+                LOGGER.log(Level.WARNING, "Timeout while waiting for pod to be ready: slaveConnectTimeout: {0}, pod:\n{1}",
+                        new Object[] {template.getSlaveConnectTimeout(), Serialization.asYaml(timeoutPod)});
+                throw ex;
+            }
 
             LOGGER.log(INFO, () -> "Pod is running: " + cloudName + " " + namespace + "/" + podName);
 
