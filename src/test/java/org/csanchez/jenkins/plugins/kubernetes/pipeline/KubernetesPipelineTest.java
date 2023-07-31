@@ -42,8 +42,9 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.*;
 
+import io.fabric8.kubernetes.api.model.StatusDetails;
+import io.fabric8.kubernetes.client.KubernetesClient;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -51,9 +52,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import hudson.model.Computer;
-import com.gargoylesoftware.htmlunit.html.DomNodeUtil;
-import com.gargoylesoftware.htmlunit.html.HtmlElement;
-import com.gargoylesoftware.htmlunit.html.HtmlPage;
+import org.htmlunit.html.DomNodeUtil;
+import org.htmlunit.html.HtmlElement;
+import org.htmlunit.html.HtmlPage;
 import hudson.model.Label;
 import hudson.model.Run;
 import hudson.slaves.SlaveComputer;
@@ -73,6 +74,7 @@ import org.csanchez.jenkins.plugins.kubernetes.PodTemplateUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
 import org.jenkinsci.plugins.workflow.job.WorkflowRun;
+import org.jenkinsci.plugins.workflow.steps.durable_task.DurableTaskStep;
 import org.jenkinsci.plugins.workflow.test.steps.SemaphoreStep;
 import org.junit.After;
 import org.junit.Before;
@@ -246,7 +248,7 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
                 deletePods(cloud.connect(), getLabels(cloud, this, name), true));
     }
 
-    @Issue("JENKINS-57893")
+    @Issue({"JENKINS-57893", "SECURITY-3079"})
     @Test
     public void runInPodFromYaml() throws Exception {
         List<PodTemplate> templates = cloud.getTemplates();
@@ -264,6 +266,17 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
         r.assertLogContains("INSIDE_CONTAINER_ENV_VAR_FROM_SECRET = **** or " + CONTAINER_ENV_VAR_FROM_SECRET_VALUE.toUpperCase(Locale.ROOT) + "\n", b);
         assertFalse("There are pods leftover after test execution, see previous logs",
                 deletePods(cloud.connect(), getLabels(cloud, this, name), true));
+
+        // SECURITY-3079
+        DurableTaskStep.USE_WATCHING = true;
+        try {
+            WorkflowRun build = p.scheduleBuild2(0).waitForStart();
+            r.assertBuildStatusSuccess(r.waitForCompletion(build));
+            r.assertLogNotContains(CONTAINER_ENV_VAR_FROM_SECRET_VALUE, build);
+            r.assertLogContains("INSIDE_CONTAINER_ENV_VAR_FROM_SECRET = **** or " + CONTAINER_ENV_VAR_FROM_SECRET_VALUE.toUpperCase(Locale.ROOT) + "\n", build);
+        } finally {
+            DurableTaskStep.USE_WATCHING = false;
+        }
     }
 
     @Test
@@ -290,7 +303,6 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
     @Test
     public void runInPodWithMultipleContainers() throws Exception {
         r.assertBuildStatusSuccess(r.waitForCompletion(b));
-        r.assertLogContains("image: \"jenkins/inbound-agent:4.3-4-alpine\"", b);
         r.assertLogContains("image: \"maven:3.3.9-jdk-8-alpine\"", b);
         r.assertLogContains("image: \"golang:1.6.3-alpine\"", b);
         r.assertLogContains("My Kubernetes Pipeline", b);
@@ -428,8 +440,6 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
         PodTemplate pt = new PodTemplate();
         pt.setName("podTemplate");
         pt.setLabel("label1 label2");
-        ContainerTemplate jnlp = new ContainerTemplate("jnlp", "jenkins/inbound-agent:4.3-4-alpine");
-        pt.setContainers(Collections.singletonList(jnlp));
         cloud.addTemplate(pt);
         SemaphoreStep.waitForStart("pod/1", b);
         Map<String, String> labels = getLabels(cloud, this, name);
@@ -462,7 +472,10 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
     @Test
     public void runInPodWithRetention() throws Exception {
         r.assertBuildStatusSuccess(r.waitForCompletion(b));
-        assertTrue(deletePods(cloud.connect(), getLabels(this, name), true));
+        System.out.println("Deleting leftover pods");
+        KubernetesClient client = cloud.connect();
+        Map<String, String> labels = getLabels(this, name);
+        assertTrue(client.pods().withLabels(labels).delete().size() > 0);
     }
 
     @Issue("JENKINS-49707")
@@ -500,6 +513,17 @@ public class KubernetesPipelineTest extends AbstractKubernetesPipelineTest {
     public void podDeadlineExceeded() throws Exception {
         r.assertBuildStatus(Result.ABORTED, r.waitForCompletion(b));
         r.waitForMessage("Pod just failed (Reason: DeadlineExceeded, Message: Pod was active on the node longer than the specified deadline)", b);
+    }
+
+    @Test
+    public void podDeadlineExceededGlobalTemplate() throws Exception {
+        PodTemplate podTemplate = new PodTemplate("podDeadlineExceededGlobalTemplate");
+        podTemplate.setLabel("podDeadlineExceededGlobalTemplate");
+        podTemplate.setActiveDeadlineSeconds(30);
+        cloud.addTemplate(podTemplate);
+        r.assertBuildStatus(Result.ABORTED, r.waitForCompletion(b));
+        r.waitForMessage("Pod just failed (Reason: DeadlineExceeded, Message: Pod was active on the node longer than the specified deadline)", b);
+        r.waitForMessage("---Logs---", b);
     }
 
     @Test

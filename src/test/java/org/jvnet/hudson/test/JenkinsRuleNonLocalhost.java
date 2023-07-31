@@ -34,6 +34,9 @@ import java.util.logging.Logger;
 
 import javax.servlet.ServletContext;
 
+import org.apache.commons.lang3.StringUtils;
+import org.eclipse.jetty.http.HttpCompliance;
+import org.eclipse.jetty.http.UriCompliance;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;
 import org.eclipse.jetty.server.Server;
@@ -41,6 +44,7 @@ import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.webapp.Configuration;
 import org.eclipse.jetty.webapp.WebAppContext;
 import org.eclipse.jetty.webapp.WebXmlConfiguration;
+import org.eclipse.jetty.websocket.server.config.JettyWebSocketServletContainerInitializer;
 
 /**
  * @author Carlos Sanchez
@@ -77,6 +81,7 @@ public class JenkinsRuleNonLocalhost extends JenkinsRule {
         context.setClassLoader(getClass().getClassLoader());
         context.setConfigurations(new Configuration[]{new WebXmlConfiguration()});
         context.addBean(new NoListenerConfiguration(context));
+        JettyWebSocketServletContainerInitializer.configure(context, null);
         server.setHandler(context);
         context.setMimeTypes(MIME_TYPES);
         context.getSecurityHandler().setLoginService(configureUserRealm());
@@ -86,12 +91,15 @@ public class JenkinsRuleNonLocalhost extends JenkinsRule {
         HttpConfiguration config = connector.getConnectionFactory(HttpConnectionFactory.class).getHttpConfiguration();
         // use a bigger buffer as Stapler traces can get pretty large on deeply nested URL
         config.setRequestHeaderSize(12 * 1024);
+        config.setHttpCompliance(HttpCompliance.RFC7230);
+        config.setUriCompliance(UriCompliance.LEGACY);
         System.err.println("Listening on host address: " + HOST);
         connector.setHost(HOST);
 
-        if (System.getProperty("port")!=null) {
-            LOGGER.info("Overriding port using system property: " + System.getProperty("port"));
-            connector.setPort(Integer.parseInt(System.getProperty("port")));
+        String customPort = System.getProperty("port");
+        if (StringUtils.isNotBlank(customPort)) {
+            LOGGER.info("Overriding port using system property: " + customPort);
+            connector.setPort(Integer.parseInt(customPort));
         } else {
             if (port != null) {
                 connector.setPort(port);

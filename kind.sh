@@ -1,33 +1,38 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euxo pipefail
 
-export PATH=$WSTMP:$PATH
-if [ \! -x $WSTMP/kind ]
+export PATH=$WORKSPACE_TMP:$PATH
+if [ \! -x "$WORKSPACE_TMP/kind" ]
 then
-    curl -Lo $WSTMP/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.11.1/kind-$(uname | tr '[:upper:]' '[:lower:]')-amd64
-    chmod +x $WSTMP/kind
+    curl -sLo "$WORKSPACE_TMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.17.0/kind-$(uname | tr '[:upper:]' '[:lower:]')-amd64
+    chmod +x "$WORKSPACE_TMP/kind"
 fi
-if [ \! -x $WSTMP/kubectl ]
+if [ \! -x "$WORKSPACE_TMP/kubectl" ]
 then
-    curl -Lo $WSTMP/kubectl https://storage.googleapis.com/kubernetes-release/release/v1.21.3/bin/$(uname | tr '[:upper:]' '[:lower:]')/amd64/kubectl
-    chmod +x $WSTMP/kubectl
+    curl -sLo "$WORKSPACE_TMP/kubectl" https://storage.googleapis.com/kubernetes-release/release/v1.25.4/bin/$(uname | tr '[:upper:]' '[:lower:]')/amd64/kubectl
+    chmod +x "$WORKSPACE_TMP/kubectl"
 fi
 
 export cluster=ci$RANDOM
-export KUBECONFIG=$WSTMP/kubeconfig-$cluster
-kind create cluster --name $cluster --wait 5m --config kind.yaml
+export KUBECONFIG="$WORKSPACE_TMP/kubeconfig-$cluster"
+kind create cluster --name $cluster --wait 5m
 function cleanup() {
-    kind export logs --name $cluster $WSTMP/kindlogs || :
+    kind export logs --name $cluster "$WORKSPACE_TMP/kindlogs" || :
     kind delete cluster --name $cluster || :
-    rm $KUBECONFIG
+    rm "$KUBECONFIG"
 }
 trap cleanup EXIT
 kubectl cluster-info
 
-DOCKER_IMAGE=$(grep -e image: test-in-k8s.yaml | cut -d ':' -f 2- | xargs)
-docker pull $DOCKER_IMAGE
-kind load docker-image $DOCKER_IMAGE --name $cluster
+PRE_LOAD_IMAGES=()
+PRE_LOAD_IMAGES+=($(grep -e image: test-in-k8s.yaml | cut -d ':' -f 2- | xargs))
+PRE_LOAD_IMAGES+=($(grep -h --include="*.groovy" -e "^\s*image: .*$" -R src/test/resources | sed -e "s/^[[:space:]]*image: //" | sort | uniq | grep -v "windows" | grep -v "nonexistent" | grep -v "invalid" | xargs))
+for image in "${PRE_LOAD_IMAGES[@]}"
+do
+  docker pull "$image"
+  kind load docker-image "$image" --name $cluster
+done
 
-bash test-in-k8s.sh
-rm -rf $WSTMP/surefire-reports
-kubectl cp jenkins:/checkout/target/surefire-reports $WSTMP/surefire-reports
+./test-in-k8s.sh "$@"
+rm -rf "$WORKSPACE_TMP/surefire-reports"
+kubectl cp jenkins:/checkout/target/surefire-reports "$WORKSPACE_TMP/surefire-reports"

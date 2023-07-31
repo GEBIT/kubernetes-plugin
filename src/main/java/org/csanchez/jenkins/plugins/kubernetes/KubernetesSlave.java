@@ -1,6 +1,5 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
-import edu.umd.cs.findbugs.annotations.NonNull;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Objects;
@@ -29,6 +28,7 @@ import org.jenkinsci.plugins.cloudstats.ProvisioningActivity.Id;
 import org.jenkinsci.plugins.cloudstats.TrackedItem;
 import org.jenkinsci.plugins.durabletask.executors.OnceRetentionStrategy;
 import org.jenkinsci.plugins.kubernetes.auth.KubernetesAuthException;
+import org.jenkinsci.plugins.workflow.flow.FlowExecutionOwner;
 import org.jvnet.localizer.ResourceBundleHolder;
 import org.kohsuke.stapler.DataBoundConstructor;
 
@@ -89,7 +89,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
     private transient Id id;
 
     @NonNull
-    public PodTemplate getTemplate() {
+    public PodTemplate getTemplate() throws IllegalStateException {
         // Look up updated pod template after a restart
         PodTemplate template = getTemplateOrNull();
         if (template == null) {
@@ -109,6 +109,42 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
             template = getKubernetesCloud().getTemplateById(podTemplateId);
         }
         return template;
+    }
+
+    /**
+     * Makes a best effort to find the build log corresponding to this agent.
+     */
+    @NonNull
+    public TaskListener getRunListener() {
+        PodTemplate podTemplate = getTemplateOrNull();
+        if (podTemplate != null) {
+            TaskListener listener = podTemplate.getListenerOrNull();
+            if (listener != null) {
+                return listener;
+            }
+        }
+        Computer c = toComputer();
+        if (c != null) {
+            for (Executor executor : c.getExecutors()) {
+                Queue.Executable executable = executor.getCurrentExecutable();
+                // If this executor hosts a PlaceholderExecutable, send to the owning build log.
+                if (executable != null) {
+                    Queue.Executable parentExecutable = executable.getParentExecutable();
+                    if (parentExecutable instanceof FlowExecutionOwner.Executable) {
+                        FlowExecutionOwner flowExecutionOwner = ((FlowExecutionOwner.Executable) parentExecutable).asFlowExecutionOwner();
+                        if (flowExecutionOwner != null) {
+                            try {
+                                return flowExecutionOwner.getListener();
+                            } catch (IOException x) {
+                                LOGGER.log(Level.WARNING, null, x);
+                            }
+                        }
+                    }
+                }
+                // TODO handle freestyle and similar if executable instanceof Run, by capturing a TaskListener from RunListener.onStarted
+            }
+        }
+        return TaskListener.NULL;
     }
 
     /**
@@ -238,6 +274,8 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
         Cloud cloud = Jenkins.get().getCloud(cloudName);
         if (cloud instanceof KubernetesCloud) {
             return (KubernetesCloud) cloud;
+        } else if (cloud == null) {
+            throw new IllegalStateException("No such cloud " + cloudName);
         } else {
             throw new IllegalStateException(KubernetesSlave.class.getName() + " can be launched only by instances of " + KubernetesCloud.class.getName() + ". Cloud is " + cloud.getClass().getName());
         }
@@ -311,8 +349,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
         // Prior to termination, determine if we should delete the slave pod based on
         // the slave pod's current state and the pod retention policy.
         // Healthy slave pods should still have a JNLP agent running at this point.
-        Pod pod = client.pods().inNamespace(getNamespace()).withName(name).get();
-        boolean deletePod = getPodRetention(cloud).shouldDeletePod(cloud, pod);
+        boolean deletePod = getPodRetention(cloud).shouldDeletePod(cloud, () -> client.pods().inNamespace(getNamespace()).withName(name).get());
         
         Computer computer = toComputer();
         if (computer == null) {
@@ -356,10 +393,8 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
 
     private void deleteSlavePod(TaskListener listener, KubernetesClient client) throws IOException {
         try {
-            Boolean deleted = client.pods().inNamespace(getNamespace()).withName(name).
-                cascading(true). // TODO JENKINS-58306 pending https://github.com/fabric8io/kubernetes-client/pull/1620
-                delete();
-            if (!Boolean.TRUE.equals(deleted)) {
+            boolean deleted = client.pods().inNamespace(getNamespace()).withName(name).delete().size() == 1;
+            if (!deleted) {
                 String msg = String.format("Failed to delete pod for agent %s/%s: not found", getNamespace(), name);
                 LOGGER.log(Level.WARNING, msg);
                 listener.error(msg);
@@ -370,6 +405,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
                     e.getMessage());
             LOGGER.log(Level.WARNING, msg, e);
             listener.error(msg);
+            // TODO should perhaps retry later, in case API server is just overloaded currently
             return;
         }
 
@@ -407,7 +443,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
                 if (currentExecutable != null && executables.add(currentExecutable)) {
                     listener.getLogger().println(Messages.KubernetesSlave_AgentIsProvisionedFromTemplate(
                             ModelHyperlinkNote.encodeTo("/computer/" + getNodeName(), getNodeName()),
-                            getTemplate().getName())
+                            template.getName())
                     );
                     printAgentDescription(listener);
                     checkHomeAndWarnIfNeeded(listener);

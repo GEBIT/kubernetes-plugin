@@ -14,17 +14,19 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.gargoylesoftware.htmlunit.html.DomElement;
-import com.gargoylesoftware.htmlunit.html.DomNodeList;
-import com.gargoylesoftware.htmlunit.html.HtmlButton;
-import com.gargoylesoftware.htmlunit.html.HtmlElement;
-import com.gargoylesoftware.htmlunit.html.HtmlForm;
-import com.gargoylesoftware.htmlunit.html.HtmlFormUtil;
-import com.gargoylesoftware.htmlunit.html.HtmlInput;
-import com.gargoylesoftware.htmlunit.html.HtmlPage;
+import org.htmlunit.ElementNotFoundException;
+import org.htmlunit.html.DomElement;
+import org.htmlunit.html.DomNodeList;
+import org.htmlunit.html.HtmlButton;
+import org.htmlunit.html.HtmlElement;
+import org.htmlunit.html.HtmlForm;
+import org.htmlunit.html.HtmlFormUtil;
+import org.htmlunit.html.HtmlInput;
+import org.htmlunit.html.HtmlPage;
 import org.apache.commons.beanutils.PropertyUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.RandomUtils;
+import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.csanchez.jenkins.plugins.kubernetes.pod.retention.Always;
 import org.csanchez.jenkins.plugins.kubernetes.pod.retention.PodRetention;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.EmptyDirVolume;
@@ -246,7 +248,7 @@ public class KubernetesCloudTest {
 
         KubernetesCloud copy = new KubernetesCloud("copy", cloud);
         assertEquals("copy", copy.name);
-        assertEquals("Expected cloud from copy constructor to be equal to the source except for name", cloud, copy);
+        assertTrue("Expected cloud from copy constructor to be equal to the source except for name", EqualsBuilder.reflectionEquals(cloud, copy, true, KubernetesCloud.class, "name"));
     }
 
     @Test
@@ -257,20 +259,32 @@ public class KubernetesCloudTest {
         JenkinsRule.WebClient wc = j.createWebClient();
         HtmlPage p = wc.goTo("configureClouds/");
         HtmlForm f = p.getFormByName("config");
-        HtmlButton buttonExtends = HtmlFormUtil.getButtonByCaption(f, "Pod Templates...");
+        HtmlButton buttonExtends = getButton(f, "Pod Templates");
         buttonExtends.click();
-        HtmlButton buttonAdd = HtmlFormUtil.getButtonByCaption(f, "Add Pod Template");
+        HtmlButton buttonAdd = getButton(f, "Add Pod Template");
         buttonAdd.click();
-        HtmlButton buttonDetails = HtmlFormUtil.getButtonByCaption(f, "Pod Template details...");
+        HtmlButton buttonDetails = getButton(f, "Pod Template details");
         buttonDetails.click();
         DomElement templates = p.getElementByName("templates");
         HtmlInput templateName = getInputByName(templates, "_.name");
-        templateName.setValueAttribute("default-workspace-volume");
+        templateName.setValue("default-workspace-volume");
         j.submit(f);
         cloud = j.jenkins.clouds.get(KubernetesCloud.class);
         PodTemplate podTemplate = cloud.getTemplates().get(0);
         assertEquals("default-workspace-volume", podTemplate.getName());
         assertEquals(WorkspaceVolume.getDefault(), podTemplate.getWorkspaceVolume());
+    }
+
+    // TODO 2.385+ delete
+    private HtmlButton getButton(HtmlForm f, String buttonText) {
+        HtmlButton button;
+        try {
+            button = HtmlFormUtil.getButtonByCaption(f, buttonText);
+        } catch (ElementNotFoundException e) {
+            // before https://github.com/jenkinsci/jenkins/pull/7173 the 3 dots where added by core
+            button = HtmlFormUtil.getButtonByCaption(f, buttonText + "...");
+        }
+        return button;
     }
 
     @Test

@@ -112,6 +112,7 @@ public class KubernetesCloud extends Cloud {
 
     private String namespace;
     private String jnlpregistry;
+    private boolean restrictedPssSecurityContext = false;
     private boolean webSocket;
     private boolean directConnection = false;
     private String jenkinsUrl;
@@ -280,6 +281,15 @@ public class KubernetesCloud extends Cloud {
     @DataBoundSetter
     public void setJnlpregistry(String jnlpregistry) {
         this.jnlpregistry = Util.fixEmpty(jnlpregistry);
+    }
+
+    public boolean isRestrictedPssSecurityContext() {
+        return restrictedPssSecurityContext;
+    }
+
+    @DataBoundSetter
+    public void setRestrictedPssSecurityContext(boolean restrictedPssSecurityContext) {
+        this.restrictedPssSecurityContext = restrictedPssSecurityContext;
     }
 
     @CheckForNull
@@ -661,7 +671,8 @@ public class KubernetesCloud extends Cloud {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         KubernetesCloud that = (KubernetesCloud) o;
-        return skipTlsVerify == that.skipTlsVerify &&
+        return Objects.equals(name, that.name) &&
+                skipTlsVerify == that.skipTlsVerify &&
                 addMasterProxyEnvVars == that.addMasterProxyEnvVars &&
                 capOnlyOnAlivePods == that.capOnlyOnAlivePods &&
                 Objects.equals(containerCap, that.containerCap) &&
@@ -687,7 +698,7 @@ public class KubernetesCloud extends Cloud {
 
     @Override
     public int hashCode() {
-        return Objects.hash(defaultsProviderTemplate, templates, serverUrl, serverCertificate, skipTlsVerify,
+        return Objects.hash(name, defaultsProviderTemplate, templates, serverUrl, serverCertificate, skipTlsVerify,
                 addMasterProxyEnvVars, capOnlyOnAlivePods, namespace, jnlpregistry, jenkinsUrl, jenkinsTunnel, credentialsId,
                 containerCap, retentionTimeout, connectTimeout, readTimeout, podLabels, usageRestricted,
                 maxRequestsPerHost, podRetention, useJenkinsProxy);

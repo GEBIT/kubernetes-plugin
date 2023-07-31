@@ -344,13 +344,13 @@ public class PodTemplateUtilsTest {
         Pod parentPod = new PodBuilder()
                 .withNewMetadata().endMetadata()
                 .withNewSpec()
-                .withInitContainers(new ContainerBuilder().withName("init").withNewImage("image-parent").build())
+                .withInitContainers(new ContainerBuilder().withName("init").withImage("image-parent").build())
                 .endSpec()
                 .build();
         Pod childPod = new PodBuilder()
                 .withNewMetadata().endMetadata()
                 .withNewSpec()
-                .withInitContainers(new ContainerBuilder().withName("init").withNewImage("image-child").build())
+                .withInitContainers(new ContainerBuilder().withName("init").withImage("image-child").build())
                 .endSpec()
                 .build();
 
@@ -527,13 +527,13 @@ public class PodTemplateUtilsTest {
     @Test
     public void shouldCombineAllMounts() {
         PodTemplate template1 = new PodTemplate();
-        HostPathVolume hostPathVolume1 = new HostPathVolume("/host/mnt1", "/container/mnt1");
-        HostPathVolume hostPathVolume2 = new HostPathVolume("/host/mnt2", "/container/mnt2");
+        HostPathVolume hostPathVolume1 = new HostPathVolume("/host/mnt1", "/container/mnt1", false);
+        HostPathVolume hostPathVolume2 = new HostPathVolume("/host/mnt2", "/container/mnt2", false);
         template1.setVolumes(asList(hostPathVolume1, hostPathVolume2));
 
         PodTemplate template2 = new PodTemplate();
-        HostPathVolume hostPathVolume3 = new HostPathVolume("/host/mnt3", "/container/mnt3");
-        HostPathVolume hostPathVolume4 = new HostPathVolume("/host/mnt1", "/container/mnt4");
+        HostPathVolume hostPathVolume3 = new HostPathVolume("/host/mnt3", "/container/mnt3", false);
+        HostPathVolume hostPathVolume4 = new HostPathVolume("/host/mnt1", "/container/mnt4", false);
         template2.setVolumes(asList(hostPathVolume3, hostPathVolume4));
 
         PodTemplate result = combine(template1, template2);

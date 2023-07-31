@@ -151,7 +151,7 @@ Find more examples in the [examples dir](examples).
 The default jnlp agent image used can be customized by adding it to the template
 
 ```groovy
-containerTemplate(name: 'jnlp', image: 'jenkins/inbound-agent:4.7-1', args: '${computer.jnlpmac} ${computer.name}'),
+containerTemplate(name: 'jnlp', image: 'jenkins/inbound-agent', args: '${computer.jnlpmac} ${computer.name}'),
 ```
 
 or with the yaml syntax. Pretty much any field from the [pod model](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-v1/) can be specified through the yaml syntax.
@@ -162,7 +162,7 @@ kind: Pod
 spec:
   containers:
   - name: jnlp
-    image: 'jenkins/inbound-agent:4.7-1'
+    image: 'jenkins/inbound-agent'
     args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
 ```
 
@@ -276,6 +276,26 @@ podTemplate(containers: […]) {
   }
 }
 ```
+
+### Retrying after infrastructure outages
+
+You can use the `retry` step to automatically try the whole build stage again with a fresh pod in case of fatal infrastructure problems.
+(For example: cluster backup & restore; node pool used for agents drained and upgraded.)
+
+```groovy
+podTemplate(…) {
+  retry(count: 2, conditions: [kubernetesAgent(), nonresumable()]) {
+    node(POD_LABEL) {
+      sh 'your-build-process'
+    }
+  }
+}
+```
+
+will rerun the whole `node` block (using the same pod definition) in case the first attempt fails for a qualifying reason traceable to loss of the pod
+(_not_ routine problems such as compilation errors or `OutOfMemoryError`).
+
+For Declarative Pipeline, just add the `retries` option, as shown below.
 
 # Configuration reference
 ## Pod template
@@ -588,6 +608,7 @@ pipeline {
             - cat
             tty: true
         '''
+      retries 2
     }
   }
   stages {
@@ -612,6 +633,7 @@ pipeline {
   agent {
     kubernetes {
       yamlFile 'KubernetesPod.yaml'
+      retries 2
     }
   }
   stages {
@@ -766,6 +788,7 @@ Please read [Features controlled by system properties](https://www.jenkins.io/do
 
 * `KUBERNETES_JENKINS_URL` : Jenkins URL to be used by agents. This is meant to be used for OEM integration.
 * `io.jenkins.plugins.kubernetes.disableNoDelayProvisioning` (since 1.19.1) Whether to disable the no-delay provisioning strategy the plugin uses (defaults to `false`).
+* `io.jenkins.plugins.kubernetes.NoDelayProvisionerStrategy.disableCloudShuffle` Whether to disable the shuffling of clouds. When true clouds will be searched in order they are defined (defaults to `false`).
 * `jenkins.host.address` : (for unit tests) controls the host agents should use to contact Jenkins
 * `org.csanchez.jenkins.plugins.kubernetes.PodTemplate.connectionTimeout` : The time in seconds to wait before considering the pod scheduling has failed (defaults to `1000`)
 * `org.csanchez.jenkins.plugins.kubernetes.pipeline.ContainerExecDecorator.stdinBufferSize` : stdin buffer size in bytes for commands sent to Kubernetes exec api. A low value will cause slowness in commands executed. A higher value will consume more memory (defaults to `16*1024`)
@@ -911,24 +934,7 @@ However, if your Jenkins controller has HTTPS configured with self-signed certif
 To do that, you can extend the `jenkins/inbound-agent` image and add your certificate as follows:
 
 ```Dockerfile
-FROM jenkins/inbound-agent:jdk8
-
-USER root
-
-ADD cert.pem /tmp/cert.pem
-
-RUN keytool -noprompt -storepass changeit \
-  -keystore "$JAVA_HOME/jre/lib/security/cacerts" \
-  -import -file /tmp/cert.pem -alias jenkinsMaster && \
-  rm -f /tmp/cert.pem
-
-USER jenkins
-```
-
-Or, if you are using JDK 11:
-
-```Dockerfile
-FROM jenkins/inbound-agent:jdk11
+FROM jenkins/inbound-agent
 
 USER root
 
