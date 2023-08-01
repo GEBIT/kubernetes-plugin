@@ -3,7 +3,8 @@
   <parent>
     <groupId>org.jenkins-ci.plugins</groupId>
     <artifactId>plugin</artifactId>
-    <version>4.70</version>
+    <!-- downgraded from 4.70 because of https://jira.gebit.de/browse/DINF-729 -->
+    <version>4.54</version>
     <relativePath/>
   </parent>
 
@@ -54,6 +55,9 @@
     <version.tiles>2.8-gebit37</version.tiles>
     <version.gebit-build-extension>1.2.2</version.gebit-build-extension>
     <version.gebit-forked>1.0.0</version.gebit-forked>
+    <!-- set latest jenkins-test-harness version, probably a side effect of downgrading the parent version.
+    if not set, tests wont compile -->
+    <jenkins-test-harness.version>2044.v03c87927ff5c</jenkins-test-harness.version>
     <!-- GEBIT: end -->
   </properties>
   
