@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
@@ -43,6 +44,7 @@ import hudson.model.Label;
 import hudson.model.Node;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerBuilder;
+import io.fabric8.kubernetes.api.model.ContainerPort;
 import io.fabric8.kubernetes.api.model.EnvFromSource;
 import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
@@ -176,6 +178,7 @@ public class PodTemplateUtils {
         Map<String, Quantity> requests = combineResources(parent, template, ResourceRequirements::getRequests);
         Map<String, Quantity> limits = combineResources(parent, template, ResourceRequirements::getLimits);
 
+        List<ContainerPort> ports = combinePorts(parent, template);
         Map<String, VolumeMount> volumeMounts = parent.getVolumeMounts().stream()
                 .collect(Collectors.toMap(VolumeMount::getMountPath, Function.identity()));
         template.getVolumeMounts().stream().forEach(vm -> volumeMounts.put(vm.getMountPath(), vm));
@@ -192,6 +195,7 @@ public class PodTemplateUtils {
                 .withRequests(Collections.unmodifiableMap(new HashMap<>(requests))) //
                 .withLimits(Collections.unmodifiableMap(new HashMap<>(limits))) //
                 .endResources() //
+                .withPorts(ports)
                 .withEnv(combineEnvVars(parent, template)) //
                 .withEnvFrom(combinedEnvFromSources(parent, template))
                 .withVolumeMounts(new ArrayList<>(volumeMounts.values()));
@@ -204,6 +208,47 @@ public class PodTemplateUtils {
                     .endSecurityContext();
         }
         return containerBuilder.build();
+    }
+
+    /**
+     * Combines container ports with it's parent container ports.
+     * 
+     * @param parent
+     *            The parent container (nullable).
+     * @param template
+     *            The actual container
+     * @return The combined ports.
+     */
+    private static List<ContainerPort> combinePorts(Container parent, Container template) {
+        if (parent == null || parent.getPorts().isEmpty()) {
+            LOGGER.log(Level.FINEST, "Combining ports, no parent set, returning template ports: {0}", template.getPorts());
+            return template.getPorts();
+        }
+        LOGGER.log(Level.FINEST, "Combining ports, parent: {0}, template: {1}", new Object[] {parent.getPorts(), template.getPorts()});
+
+        List<ContainerPort> combinedPorts = new ArrayList<>();
+        combinedPorts.addAll(parent.getPorts());
+        for (ContainerPort templatePort : template.getPorts()) {
+            for (ContainerPort parentPort : parent.getPorts()) {
+                if (templatePort.getName().equals(parentPort.getName())) {
+                    removePort(templatePort.getName(), combinedPorts);
+                }
+            }
+            combinedPorts.add(templatePort);
+        }
+        LOGGER.log(Level.FINEST, "Combined ports: {0}", combinedPorts);
+        return combinedPorts;
+    }
+
+    private static void removePort(String name, List<ContainerPort> ports) {
+        Iterator<ContainerPort> it = ports.iterator();
+        while (it.hasNext()) {
+            ContainerPort port = it.next();
+            if (name.equals(port.getName())) {
+                it.remove();
+                return;
+            }
+        }
     }
 
     private static Map<String, Quantity> combineResources(Container parent, Container template,
