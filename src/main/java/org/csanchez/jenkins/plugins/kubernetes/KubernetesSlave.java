@@ -1,7 +1,9 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
 import java.io.IOException;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -13,7 +15,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import edu.umd.cs.findbugs.annotations.CheckForNull;
-import edu.umd.cs.findbugs.annotations.NonNull;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
 import hudson.FilePath;
 import hudson.Util;
 import hudson.slaves.SlaveComputer;
@@ -221,6 +224,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
 
     private String remoteFS;
 
+    @SuppressFBWarnings(value = "NM_CONFUSING", justification = "Naming confusion with a getRemoteFs method, but the latter is deprecated.")
     @Override
     public String getRemoteFS() {
         if (remoteFS == null) {
@@ -288,7 +292,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
             return String.format("%s-%s", DEFAULT_AGENT_PREFIX,  randString);
         }
         // no spaces
-        name = name.replaceAll("[ _]", "-").toLowerCase();
+        name = name.replaceAll("[ _]", "-").toLowerCase(Locale.getDefault());
         // keep it under 63 chars (62 is used to account for the '-')
         name = name.substring(0, Math.min(name.length(), 62 - randString.length()));
         String slaveName = String.format("%s-%s", name, randString);
@@ -495,9 +499,11 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
         this.id = id;
     }
 
+    @Override
     protected Object readResolve() {
-        this.executables = new HashSet<>();
-        return this;
+        KubernetesSlave ks = (KubernetesSlave) super.readResolve();
+        ks.executables = new HashSet<>();
+        return ks;
     }
 
     /**
@@ -583,7 +589,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
             return this;
         }
 
-        private RetentionStrategy determineRetentionStrategy() {
+        private static RetentionStrategy determineRetentionStrategy(@NonNull KubernetesCloud cloud, @NonNull PodTemplate podTemplate) {
             if (podTemplate.getIdleMinutes() == 0) {
                 return new OnceRetentionStrategy(cloud.getRetentionTimeout());
             } else {
@@ -597,6 +603,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
          * @throws IOException
          * @throws Descriptor.FormException
          */
+        @SuppressFBWarnings(value = "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR", justification = "False positive. https://github.com/spotbugs/spotbugs/issues/567")
         public KubernetesSlave build() throws IOException, Descriptor.FormException {
             Validate.notNull(podTemplate);
             Validate.notNull(cloud);
@@ -606,11 +613,11 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
                     nodeDescription == null ? podTemplate.getName() : nodeDescription,
                     cloud.name,
                     label == null ? podTemplate.getLabel() : label,
-                    decorateLauncher(computerLauncher == null ? new KubernetesLauncher(cloud.getJenkinsTunnel(), null) : computerLauncher),
-                    retentionStrategy == null ? determineRetentionStrategy() : retentionStrategy);
+                    decorateLauncher(cloud, computerLauncher == null ? new KubernetesLauncher(cloud.getJenkinsTunnel(), null) : computerLauncher),
+                    retentionStrategy == null ? determineRetentionStrategy(cloud, podTemplate) : retentionStrategy);
         }
 
-        private ComputerLauncher decorateLauncher(@NonNull ComputerLauncher launcher) {
+        private ComputerLauncher decorateLauncher(@NonNull KubernetesCloud cloud, @NonNull ComputerLauncher launcher) {
             if (launcher instanceof KubernetesLauncher) {
                 ((KubernetesLauncher) launcher).setWebSocket(cloud.isWebSocket());
             }

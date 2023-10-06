@@ -41,6 +41,7 @@ import io.fabric8.kubernetes.api.model.admission.v1.AdmissionReviewBuilder;
 import jenkins.metrics.api.Metrics;
 import jenkins.model.Jenkins;
 import jenkins.model.NodeListener;
+import net.jcip.annotations.GuardedBy;
 
 /**
  * Implements provisioning limits for clouds and pod templates
