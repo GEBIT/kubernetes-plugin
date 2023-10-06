@@ -1,43 +1,21 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import edu.umd.cs.findbugs.annotations.NonNull;
-import net.jcip.annotations.GuardedBy;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Extension;
 import hudson.ExtensionList;
-import hudson.init.InitMilestone;
-import hudson.init.Initializer;
 import hudson.model.Node;
 import hudson.model.Queue;
 import io.fabric8.kubernetes.api.model.Container;
-import io.fabric8.kubernetes.api.model.ContainerBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
-import io.fabric8.kubernetes.api.model.PodBuilder;
 import io.fabric8.kubernetes.api.model.Quantity;
-import io.fabric8.kubernetes.api.model.ResourceRequirements;
-import io.fabric8.kubernetes.api.model.ResourceRequirementsBuilder;
-import io.fabric8.kubernetes.api.model.admission.v1.AdmissionRequest;
-import io.fabric8.kubernetes.api.model.admission.v1.AdmissionReview;
-import io.fabric8.kubernetes.api.model.admission.v1.AdmissionReviewBuilder;
 import jenkins.metrics.api.Metrics;
 import jenkins.model.Jenkins;
 import jenkins.model.NodeListener;
@@ -50,8 +28,6 @@ import net.jcip.annotations.GuardedBy;
 public final class KubernetesProvisioningLimits {
 
     private static final Logger LOGGER = Logger.getLogger(KubernetesProvisioningLimits.class.getName());
-    
-    private static final String BC_LIMIT_URL = "http://bc-limit.bc-limit.svc/validate/pods";
 
     @GuardedBy("this")
     private boolean init;
@@ -107,12 +83,7 @@ public final class KubernetesProvisioningLimits {
         if (newGlobalCount <= cloud.getContainerCap()) {
             int newPodTemplateCount = getPodTemplateCount(podTemplate.getId()) + numExecutors;
             if (newPodTemplateCount <= podTemplate.getInstanceCap()) {
-                boolean admitted = admitPod(podTemplate);
-                if (!admitted) {
-                    LOGGER.log(Level.FINEST, () -> "pod was denied");
-                    return false;
-                }
-                
+                checkPodResourceReqs(podTemplate);
                 cloudCounts.put(cloud.name, newGlobalCount);
                 LOGGER.log(Level.FINEST, () -> cloud.name + " global limit: " + newGlobalCount + "/" + cloud.getContainerCap());
 
@@ -162,33 +133,9 @@ public final class KubernetesProvisioningLimits {
      * @throws IllegalArgumentException if a resource request is not parseable or
      *                                  if a resource request is 0 in any container.
      */
-    private void checkPodResourceReqs(@NonNull Pod pod) {
-        for (Container containerTemplate : pod.getSpec().getContainers()) {
-            Quantity cpuReqQ = containerTemplate.getResources().getRequests().get("cpu");
-            if (cpuReqQ != null) {
-                double cpuReq = Double.parseDouble(cpuReqQ.getAmount());
-                if (cpuReq == 0.0) {
-                    throw new IllegalArgumentException("NULL_CPU_REQUEST in container " + containerTemplate.getName());
-                }
-            } else {
-                throw new IllegalArgumentException("NULL_CPU_REQUEST in container " + containerTemplate.getName());
-            }
-            Quantity memReqQ = containerTemplate.getResources().getRequests().get("memory");
-            if (memReqQ != null) {
-                double memReq = Double.parseDouble(memReqQ.getAmount());
-                if (memReq == 0.0) {
-                    throw new IllegalArgumentException("NULL_MEM_REQUEST in container " + containerTemplate.getName());
-                }
-            } else {
-                throw new IllegalArgumentException("NULL_MEM_REQUEST in container " + containerTemplate.getName());
-            }
-        }
-    }
-
-    private boolean admitPod(@NonNull PodTemplate podTemplate) {
-        LOGGER.log(Level.INFO, () -> "checking pod admittance for template: " + podTemplate.getName());
-
+    private void checkPodResourceReqs(@NonNull PodTemplate podTemplate) {
         final Pod pod;
+        LOGGER.log(Level.INFO, () -> "checking pod resource requests for template: " + podTemplate.getName());
         try {
             KubernetesCloud cloud = (KubernetesCloud) Jenkins.get().getCloud("kubernetes");
             // use getUnwrappedTemplate() and PodTemplateBuilder without a node to get a template combined with its parents
@@ -196,71 +143,32 @@ public final class KubernetesProvisioningLimits {
             pod = builder.build();
             LOGGER.log(Level.FINEST, () -> "built slavePod with PodTemplateBuilder for resource request checking:\n" + pod.toString());
 
-            checkPodResourceReqs(pod);
+            for (Container containerTemplate : pod.getSpec().getContainers()) {
+                Quantity cpuReqQ = containerTemplate.getResources().getRequests().get("cpu");
+                if (cpuReqQ != null) {
+                    double cpuReq = Double.parseDouble(cpuReqQ.getAmount());
+                    if (cpuReq == 0.0) {
+                        throw new IllegalArgumentException("NULL_CPU_REQUEST in container " + containerTemplate.getName());
+                    }
+                } else {
+                    throw new IllegalArgumentException("NULL_CPU_REQUEST in container " + containerTemplate.getName());
+                }
+                Quantity memReqQ = containerTemplate.getResources().getRequests().get("memory");
+                if (memReqQ != null) {
+                    double memReq = Double.parseDouble(memReqQ.getAmount());
+                    if (memReq == 0.0) {
+                        throw new IllegalArgumentException("NULL_MEM_REQUEST in container " + containerTemplate.getName());
+                    }
+                } else {
+                    throw new IllegalArgumentException("NULL_MEM_REQUEST in container " + containerTemplate.getName());
+                }
+            }
         } catch (IllegalArgumentException e) {
             LOGGER.log(Level.WARNING, () -> "failed to parse valid resource request from podTemplate:\n" + e.getMessage() + "\n" + podTemplate.toString());
-            return false;
+            throw e;
         }
-        LOGGER.log(Level.FINEST, () -> "constructed resource checking pod: " + pod);
-
-        // package pod into an AdmissionReview
-        AdmissionReviewBuilder admBuilder = new AdmissionReviewBuilder();
-        AdmissionRequest r = new AdmissionRequest();
-        r.setUid(UUID.randomUUID().toString());
-        r.setObject(pod);
-        r.setOperation("CREATE");
-
-        AdmissionReview requestReview = admBuilder.withRequest(r).build();
-        try {
-            // prepare http call to bc-limit webhook
-            URL url = new URL(BC_LIMIT_URL);
-            HttpURLConnection con = (HttpURLConnection) url.openConnection();
-            // reduce timeouts so Jenkins doesn't give up on the provisioning attempt
-            // if it takes too long
-            con.setConnectTimeout(1000);
-            con.setReadTimeout(1000);
-            con.setRequestMethod("POST");
-            con.setRequestProperty("Content-Type", "application/json; utf-8");
-            con.setRequestProperty("Accept", "application/json");
-            con.setDoOutput(true);
-
-            // serialize admission review containing pod into json
-            ObjectMapper mapper = new ObjectMapper();
-            String jsonInputString = mapper.writeValueAsString(requestReview);
-
-            // write the json to the output stream of the http connection
-            try (OutputStream os = con.getOutputStream()) {
-                byte[] input = jsonInputString.getBytes("utf-8");
-                os.write(input, 0, input.length);
-            }
-    
-            // read answer from input stream of http connection
-            try (BufferedReader br = new BufferedReader(new InputStreamReader(con.getInputStream(), "utf-8"))) {
-                // to be sure, read it line by line
-                StringBuilder response = new StringBuilder();
-                String responseLine = null;
-                while ((responseLine = br.readLine()) != null) {
-                    response.append(responseLine.trim());
-                }
-                // deserialize response of bc-limit webhook into AdmissionReview
-                // (now filled with a response object)
-                AdmissionReview responseReview = mapper.readValue(response.toString(), AdmissionReview.class);
-                // get the allowed boolean from the response
-                boolean allowed = responseReview.getResponse().getAllowed();
-                if (!allowed) {
-                    // log out errors
-                    LOGGER.log(Level.WARNING, () -> "pod was not admitted: " + responseReview.getResponse().getStatus().getMessage());
-                }
-                return allowed;
-            }
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, () -> "error while trying to admit pod for template: " + podTemplate.getName() + "\n" + e);
-        }
-
-        // in case of error (bc-limit not reachable etc), always return true, so the
-        // cloud is not blocked
-        return true;
     }
+
     
     @NonNull
     @Restricted(NoExternalUse.class)
