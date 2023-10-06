@@ -36,11 +36,13 @@ import java.io.Serializable;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import edu.umd.cs.findbugs.annotations.NonNull;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /**
  * @author Carlos Sanchez carlos@apache.org
@@ -238,6 +240,7 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
         return task.getClass().getSimpleName().equals("MatrixConfiguration");
     }
 
+    @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "checked using string comparison of class name to avoid compile time dependency")
     public String calcWorkspacePath(Queue.Task task) {
         String workspacePath = null;
         if (isMavenModuleSet(task)){
@@ -297,7 +300,7 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
 
         Rsync(String workspacePath, Direction direction) {
             this.workspacePath = workspacePath;
-            this.rsyncCmd = "/usr/local/bin/" + direction.toString().toLowerCase() + "-workspace.sh";
+            this.rsyncCmd = "/usr/local/bin/" + direction.toString().toLowerCase(Locale.ENGLISH) + "-workspace.sh";
         }
 
         public RsyncResult call() throws IOException {
