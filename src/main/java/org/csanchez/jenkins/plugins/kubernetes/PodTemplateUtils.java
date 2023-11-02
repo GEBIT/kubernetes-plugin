@@ -178,7 +178,10 @@ public class PodTemplateUtils {
         Map<String, Quantity> requests = combineResources(parent, template, ResourceRequirements::getRequests);
         Map<String, Quantity> limits = combineResources(parent, template, ResourceRequirements::getLimits);
 
-        List<ContainerPort> ports = combinePorts(parent, template);
+        Map<String, ContainerPort> ports = parent.getPorts().stream()
+                .collect(Collectors.toMap(ContainerPort::getName, Function.identity()));
+        template.getPorts().stream().forEach(p -> ports.put(p.getName(), p));
+
         Map<String, VolumeMount> volumeMounts = parent.getVolumeMounts().stream()
                 .collect(Collectors.toMap(VolumeMount::getMountPath, Function.identity()));
         template.getVolumeMounts().stream().forEach(vm -> volumeMounts.put(vm.getMountPath(), vm));
@@ -195,7 +198,7 @@ public class PodTemplateUtils {
                 .withRequests(Collections.unmodifiableMap(new HashMap<>(requests))) //
                 .withLimits(Collections.unmodifiableMap(new HashMap<>(limits))) //
                 .endResources() //
-                .withPorts(ports)
+                .withPorts(Collections.unmodifiableList(new ArrayList<>(ports.values())))
                 .withEnv(combineEnvVars(parent, template)) //
                 .withEnvFrom(combinedEnvFromSources(parent, template))
                 .withVolumeMounts(new ArrayList<>(volumeMounts.values()));
@@ -208,33 +211,6 @@ public class PodTemplateUtils {
                     .endSecurityContext();
         }
         return containerBuilder.build();
-    }
-
-    /**
-     * Combines container ports with it's parent container ports.
-     * 
-     * @param parent
-     *            The parent container (nullable).
-     * @param template
-     *            The actual container
-     * @return The combined ports.
-     */
-    private static List<ContainerPort> combinePorts(Container parent, Container template) {
-        if (parent == null || parent.getPorts().isEmpty()) {
-            LOGGER.log(Level.FINEST, "Combining ports, no parent set, returning template ports: {0}", template.getPorts());
-            return template.getPorts();
-        }
-        LOGGER.log(Level.FINEST, "Combining ports, parent: {0}, template: {1}", new Object[] {parent.getPorts(), template.getPorts()});
-
-        List<ContainerPort> combinedPorts = new ArrayList<>();
-        combinedPorts.addAll(parent.getPorts());
-        for (ContainerPort templatePort : template.getPorts()) {
-            // remove a port from the combinedPorts (initialized with the parent ports), if a template port has the same name
-            combinedPorts.removeIf(port -> port.getName().equals(templatePort.getName()));
-            combinedPorts.add(templatePort);
-        }
-        LOGGER.log(Level.FINEST, "Combined ports: {0}", combinedPorts);
-        return combinedPorts;
     }
 
     private static Map<String, Quantity> combineResources(Container parent, Container template,
