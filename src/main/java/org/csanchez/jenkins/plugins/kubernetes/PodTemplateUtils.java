@@ -229,26 +229,12 @@ public class PodTemplateUtils {
         List<ContainerPort> combinedPorts = new ArrayList<>();
         combinedPorts.addAll(parent.getPorts());
         for (ContainerPort templatePort : template.getPorts()) {
-            for (ContainerPort parentPort : parent.getPorts()) {
-                if (templatePort.getName().equals(parentPort.getName())) {
-                    removePort(templatePort.getName(), combinedPorts);
-                }
-            }
+            // remove a port from the combinedPorts (initialized with the parent ports), if a template port has the same name
+            combinedPorts.removeIf(port -> port.getName().equals(templatePort.getName()));
             combinedPorts.add(templatePort);
         }
         LOGGER.log(Level.FINEST, "Combined ports: {0}", combinedPorts);
         return combinedPorts;
-    }
-
-    private static void removePort(String name, List<ContainerPort> ports) {
-        Iterator<ContainerPort> it = ports.iterator();
-        while (it.hasNext()) {
-            ContainerPort port = it.next();
-            if (name.equals(port.getName())) {
-                it.remove();
-                return;
-            }
-        }
     }
 
     private static Map<String, Quantity> combineResources(Container parent, Container template,
