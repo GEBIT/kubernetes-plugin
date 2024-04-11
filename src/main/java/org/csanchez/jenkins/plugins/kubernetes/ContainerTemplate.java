@@ -44,7 +44,7 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
     
     private Long runAsGroup;
 
-    private Boolean alwaysPullImage;
+    private boolean alwaysPullImage;
 
     private String workingDir;
 
@@ -207,11 +207,11 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
     }
     
     @DataBoundSetter
-    public void setAlwaysPullImage(Boolean alwaysPullImage) {
+    public void setAlwaysPullImage(boolean alwaysPullImage) {
         this.alwaysPullImage = alwaysPullImage;
     }
 
-    public Boolean isAlwaysPullImage() {
+    public boolean isAlwaysPullImage() {
         return alwaysPullImage;
     }
 
@@ -400,7 +400,7 @@ public class ContainerTemplate extends AbstractDescribableImpl<ContainerTemplate
         if (!Objects.equals(runAsGroup, that.runAsGroup)) {
             return false;
         }
-        if (!Objects.equals(alwaysPullImage, that.alwaysPullImage)) {
+        if (alwaysPullImage != that.alwaysPullImage) {
             return false;
         }
         if (ttyEnabled != that.ttyEnabled) {

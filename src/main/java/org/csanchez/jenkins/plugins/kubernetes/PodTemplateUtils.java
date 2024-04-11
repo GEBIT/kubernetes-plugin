@@ -98,7 +98,7 @@ public class PodTemplateUtils {
         boolean privileged = template.isPrivileged() ? template.isPrivileged() : (parent.isPrivileged() ? parent.isPrivileged() : false);
         String runAsUser = template.getRunAsUser() != null ? template.getRunAsUser() : parent.getRunAsUser();
         String runAsGroup = template.getRunAsGroup() != null ? template.getRunAsGroup() : parent.getRunAsGroup();
-        Boolean alwaysPullImage = template.isAlwaysPullImage() != null ? template.isAlwaysPullImage() : (parent.isAlwaysPullImage() != null ? parent.isAlwaysPullImage() : null);
+        boolean alwaysPullImage = template.isAlwaysPullImage() ? template.isAlwaysPullImage() : (parent.isAlwaysPullImage() ? parent.isAlwaysPullImage() : false);
         String workingDir = isNullOrEmpty(template.getWorkingDir()) ? (isNullOrEmpty(parent.getWorkingDir()) ? DEFAULT_WORKING_DIR : parent.getWorkingDir()) : template.getWorkingDir();
         String command = isNullOrEmpty(template.getCommand()) ? parent.getCommand() : template.getCommand();
         String args = isNullOrEmpty(template.getArgs()) ? parent.getArgs() : template.getArgs();
