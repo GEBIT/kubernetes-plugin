@@ -98,7 +98,8 @@ public class PodTemplateUtils {
         boolean privileged = template.isPrivileged() ? template.isPrivileged() : (parent.isPrivileged() ? parent.isPrivileged() : false);
         String runAsUser = template.getRunAsUser() != null ? template.getRunAsUser() : parent.getRunAsUser();
         String runAsGroup = template.getRunAsGroup() != null ? template.getRunAsGroup() : parent.getRunAsGroup();
-        boolean alwaysPullImage = template.isAlwaysPullImage() ? template.isAlwaysPullImage() : (parent.isAlwaysPullImage() ? parent.isAlwaysPullImage() : false);
+        // make it so alwaysPullImage = false wins. we want to disable alwaysPullImage by default and only use it when explicitly set
+        boolean alwaysPullImage = !template.isAlwaysPullImage() ? template.isAlwaysPullImage() : (!parent.isAlwaysPullImage() ? parent.isAlwaysPullImage() : true);
         String workingDir = isNullOrEmpty(template.getWorkingDir()) ? (isNullOrEmpty(parent.getWorkingDir()) ? DEFAULT_WORKING_DIR : parent.getWorkingDir()) : template.getWorkingDir();
         String command = isNullOrEmpty(template.getCommand()) ? parent.getCommand() : template.getCommand();
         String args = isNullOrEmpty(template.getArgs()) ? parent.getArgs() : template.getArgs();
