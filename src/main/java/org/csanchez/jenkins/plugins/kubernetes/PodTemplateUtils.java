@@ -56,6 +56,7 @@ import io.fabric8.kubernetes.api.model.PodFluent.SpecNested;
 import io.fabric8.kubernetes.api.model.PodSpec;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
+import io.fabric8.kubernetes.api.model.SeccompProfile;
 import io.fabric8.kubernetes.api.model.Toleration;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeMount;
@@ -162,12 +163,19 @@ public class PodTemplateUtils {
         Boolean privileged = template.getSecurityContext() != null && template.getSecurityContext().getPrivileged() != null
                 ? template.getSecurityContext().getPrivileged()
                 : (parent.getSecurityContext() != null ? parent.getSecurityContext().getPrivileged() : Boolean.FALSE);
+        Boolean allowPrivEscal = template.getSecurityContext() != null && template.getSecurityContext().getAllowPrivilegeEscalation() != null
+                ? template.getSecurityContext().getAllowPrivilegeEscalation()
+                : (parent.getSecurityContext() != null ? parent.getSecurityContext().getAllowPrivilegeEscalation() : Boolean.FALSE);
         Long runAsUser = template.getSecurityContext() != null && template.getSecurityContext().getRunAsUser() != null
                 ? template.getSecurityContext().getRunAsUser()
                 : (parent.getSecurityContext() != null ? parent.getSecurityContext().getRunAsUser() : null);
         Long runAsGroup = template.getSecurityContext() != null && template.getSecurityContext().getRunAsGroup() != null
                 ? template.getSecurityContext().getRunAsGroup()
                 : (parent.getSecurityContext() != null ? parent.getSecurityContext().getRunAsGroup() : null);
+        SeccompProfile seccompProfile = template.getSecurityContext() != null && template.getSecurityContext().getSeccompProfile() != null
+                ? template.getSecurityContext().getSeccompProfile()
+                : (parent.getSecurityContext() != null ? parent.getSecurityContext().getSeccompProfile() : null);
+
         String imagePullPolicy = isNullOrEmpty(template.getImagePullPolicy()) ? parent.getImagePullPolicy()
                 : template.getImagePullPolicy();
         String workingDir = isNullOrEmpty(template.getWorkingDir())
@@ -203,12 +211,14 @@ public class PodTemplateUtils {
                 .withEnv(combineEnvVars(parent, template)) //
                 .withEnvFrom(combinedEnvFromSources(parent, template))
                 .withVolumeMounts(new ArrayList<>(volumeMounts.values()));
-        if ((privileged != null && privileged) || runAsUser != null || runAsGroup != null) {
+        if ((privileged != null && privileged) || (allowPrivEscal != null && allowPrivEscal) || runAsUser != null || runAsGroup != null || seccompProfile != null) {
             containerBuilder = containerBuilder
                     .withNewSecurityContext()
                         .withPrivileged(privileged)
                         .withRunAsUser(runAsUser)
                         .withRunAsGroup(runAsGroup)
+                        .withAllowPrivilegeEscalation(allowPrivEscal)
+                        .withSeccompProfile(seccompProfile)
                     .endSecurityContext();
         }
         return containerBuilder.build();
