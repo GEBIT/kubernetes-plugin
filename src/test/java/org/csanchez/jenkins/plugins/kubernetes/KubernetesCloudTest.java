@@ -5,27 +5,16 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-import hudson.util.VersionNumber;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import jenkins.model.Jenkins;
-import org.htmlunit.ElementNotFoundException;
-import org.htmlunit.html.DomElement;
-import org.htmlunit.html.DomNodeList;
-import org.htmlunit.html.HtmlButton;
-import org.htmlunit.html.HtmlElement;
-import org.htmlunit.html.HtmlForm;
-import org.htmlunit.html.HtmlFormUtil;
-import org.htmlunit.html.HtmlInput;
-import org.htmlunit.html.HtmlPage;
+import jenkins.model.JenkinsLocationConfiguration;
 import org.apache.commons.beanutils.PropertyUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.RandomUtils;
@@ -35,6 +24,12 @@ import org.csanchez.jenkins.plugins.kubernetes.pod.retention.PodRetention;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.EmptyDirVolume;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.PodVolume;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.WorkspaceVolume;
+import org.htmlunit.html.DomElement;
+import org.htmlunit.html.DomNodeList;
+import org.htmlunit.html.HtmlElement;
+import org.htmlunit.html.HtmlForm;
+import org.htmlunit.html.HtmlInput;
+import org.htmlunit.html.HtmlPage;
 import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
@@ -42,17 +37,14 @@ import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.LoggerRule;
 import org.jvnet.hudson.test.recipes.LocalData;
 
-import jenkins.model.JenkinsLocationConfiguration;
-import org.xml.sax.SAXException;
-
 public class KubernetesCloudTest {
 
     @Rule
     public JenkinsRule j = new JenkinsRule();
 
     @Rule
-    public LoggerRule logs = new LoggerRule().record(Logger.getLogger(KubernetesCloud.class.getPackage().getName()),
-            Level.ALL);
+    public LoggerRule logs = new LoggerRule()
+            .record(Logger.getLogger(KubernetesCloud.class.getPackage().getName()), Level.ALL);
 
     @After
     public void tearDown() {
@@ -61,28 +53,16 @@ public class KubernetesCloudTest {
 
     @Test
     public void configRoundTrip() throws Exception {
-        KubernetesCloud cloud = new KubernetesCloud("kubernetes");
-        PodTemplate podTemplate = new PodTemplate();
+        var cloud = new KubernetesCloud("kubernetes");
+        var podTemplate = new PodTemplate();
         podTemplate.setName("test-template");
         podTemplate.setLabel("test");
         cloud.addTemplate(podTemplate);
-        j.jenkins.clouds.add(cloud);
-        j.jenkins.save();
-        JenkinsRule.WebClient wc = j.createWebClient();
-        HtmlPage p = getCloudPage(wc);
-        HtmlForm f = p.getFormByName("config");
-        j.submit(f);
-        assertTrue(podTemplate.toString().startsWith(
-                "PodTemplate{id='"+podTemplate.getId()+"', name='test-template', label='test', mountWorkspace='true', workspaceVolume='org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.HostPathWorkspaceVolume"));
-    }
-
-    // TODO 2.414+ delete
-    private HtmlPage getCloudPage(JenkinsRule.WebClient wc) throws IOException, SAXException {
-        if (Jenkins.getVersion().isNewerThanOrEqualTo(new VersionNumber("2.414"))) {
-            return wc.goTo("cloud/kubernetes/configure");
-        } else {
-            return wc.goTo("configureClouds/");
-        }
+        var jenkins = j.jenkins;
+        jenkins.clouds.add(cloud);
+        jenkins.save();
+        j.submit(j.createWebClient().goTo("cloud/kubernetes/configure").getFormByName("config"));
+        assertEquals(cloud, jenkins.clouds.get(KubernetesCloud.class));
     }
 
     @Test
@@ -214,7 +194,6 @@ public class KubernetesCloudTest {
         assertEquals(new LinkedHashMap<>(labelsMap), cloud.getPodLabelsMap());
         assertEquals(labels, cloud.getPodLabels());
 
-
         cloud.setLabels(null);
         assertEquals(Collections.singletonMap("jenkins", "slave"), cloud.getPodLabelsMap());
         assertEquals(Collections.singletonMap("jenkins", "slave"), cloud.getLabels());
@@ -230,8 +209,9 @@ public class KubernetesCloudTest {
         pt.setName("podTemplate");
 
         KubernetesCloud cloud = new KubernetesCloud("name");
-        ArrayList<String> objectProperties = new ArrayList<>(Arrays.asList("templates", "podRetention", "podLabels", "labels", "serverCertificate"));
-        for (String property: PropertyUtils.describe(cloud).keySet()) {
+        var objectProperties =
+                Set.of("templates", "podRetention", "podLabels", "labels", "serverCertificate", "garbageCollection");
+        for (String property : PropertyUtils.describe(cloud).keySet()) {
             if (PropertyUtils.isWriteable(cloud, property)) {
                 Class<?> propertyType = PropertyUtils.getPropertyType(cloud, property);
                 if (propertyType == String.class) {
@@ -261,7 +241,9 @@ public class KubernetesCloudTest {
 
         KubernetesCloud copy = new KubernetesCloud("copy", cloud);
         assertEquals("copy", copy.name);
-        assertTrue("Expected cloud from copy constructor to be equal to the source except for name", EqualsBuilder.reflectionEquals(cloud, copy, true, KubernetesCloud.class, "name"));
+        assertTrue(
+                "Expected cloud from copy constructor to be equal to the source except for name",
+                EqualsBuilder.reflectionEquals(cloud, copy, true, KubernetesCloud.class, "name"));
     }
 
     @Test
@@ -270,34 +252,26 @@ public class KubernetesCloudTest {
         j.jenkins.clouds.add(cloud);
         j.jenkins.save();
         JenkinsRule.WebClient wc = j.createWebClient();
-        HtmlPage p = getCloudPage(wc);
+        HtmlPage p = wc.goTo("cloud/kubernetes/new");
         HtmlForm f = p.getFormByName("config");
-        HtmlButton buttonExtends = getButton(f, "Pod Templates");
-        buttonExtends.click();
-        HtmlButton buttonAdd = getButton(f, "Add Pod Template");
-        buttonAdd.click();
-        HtmlButton buttonDetails = getButton(f, "Pod Template details");
-        buttonDetails.click();
-        DomElement templates = p.getElementByName("templates");
-        HtmlInput templateName = getInputByName(templates, "_.name");
+        HtmlInput templateName = getInputByName(f, "_.name");
         templateName.setValue("default-workspace-volume");
         j.submit(f);
         cloud = j.jenkins.clouds.get(KubernetesCloud.class);
         PodTemplate podTemplate = cloud.getTemplates().get(0);
         assertEquals("default-workspace-volume", podTemplate.getName());
         assertEquals(WorkspaceVolume.getDefault(), podTemplate.getWorkspaceVolume());
-    }
-
-    // TODO 2.385+ delete
-    private HtmlButton getButton(HtmlForm f, String buttonText) {
-        HtmlButton button;
-        try {
-            button = HtmlFormUtil.getButtonByCaption(f, buttonText);
-        } catch (ElementNotFoundException e) {
-            // before https://github.com/jenkinsci/jenkins/pull/7173 the 3 dots where added by core
-            button = HtmlFormUtil.getButtonByCaption(f, buttonText + "...");
-        }
-        return button;
+        // test whether we can edit a template
+        p = wc.goTo("cloud/kubernetes/template/" + podTemplate.getId() + "/");
+        f = p.getFormByName("config");
+        templateName = getInputByName(f, "_.name");
+        templateName.setValue("default-workspace");
+        j.submit(f);
+        podTemplate = cloud.getTemplates().get(0);
+        assertEquals("default-workspace", podTemplate.getName());
+        p = wc.goTo("cloud/kubernetes/templates");
+        DomElement row = p.getElementById("template_" + podTemplate.getId());
+        assertTrue(row != null);
     }
 
     @Test
@@ -335,5 +309,4 @@ public class KubernetesCloudTest {
         }
         return null;
     }
-
 }

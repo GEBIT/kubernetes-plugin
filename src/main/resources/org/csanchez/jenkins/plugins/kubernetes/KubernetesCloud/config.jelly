@@ -1,121 +1,123 @@
+<!--
+The MIT License
+Copyright (c) 2023, CloudBees Inc.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+-->
 <?jelly escape-by-default='true'?>
 <j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form" xmlns:c="/lib/credentials">
 
     <f:entry title="${%Name}" field="name">
       <f:textbox default="kubernetes" clazz="required"/>
     </f:entry>
-    
-    <f:advanced title="Kubernetes Cloud details">
 
-      <f:entry title="${%Kubernetes URL}" field="serverUrl">
-        <f:textbox/>
-      </f:entry>
+    <f:entry title="${%Kubernetes URL}" field="serverUrl">
+      <f:textbox/>
+    </f:entry>
 
-      <f:entry title="${%Use Jenkins Proxy}" field="useJenkinsProxy">
-        <f:checkbox/>
-      </f:entry>
+    <f:entry title="${%Use Jenkins Proxy}" field="useJenkinsProxy">
+      <f:checkbox/>
+    </f:entry>
 
-      <f:entry title="${%Kubernetes server certificate key}" field="serverCertificate">
-        <f:textarea/>
-      </f:entry>
+    <f:entry title="${%Kubernetes server certificate key}" field="serverCertificate">
+      <f:textarea/>
+    </f:entry>
 
-      <f:entry title="${%Disable https certificate check}" field="skipTlsVerify">
-        <f:checkbox />
-      </f:entry>
+    <f:entry title="${%Disable https certificate check}" field="skipTlsVerify">
+      <f:checkbox />
+    </f:entry>
 
-      <f:entry title="${%Kubernetes Namespace}" field="namespace">
-        <f:textbox/>
-      </f:entry>
+    <f:entry title="${%Kubernetes Namespace}" field="namespace">
+      <f:textbox/>
+    </f:entry>
 
-      <f:entry title="${%JNLP Docker Registry}" field="jnlpregistry">
-        <f:textbox/>
-      </f:entry>
+    <f:entry title="${%Agent Docker Registry}" field="jnlpregistry">
+      <f:textbox/>
+    </f:entry>
 
-      <f:entry title="${%Inject restricted PSS security context in JNLP container definition}" field="restrictedPssSecurityContext">
-        <f:checkbox/>
-      </f:entry>
+    <f:entry title="${%Inject restricted PSS security context in agent container definition}" field="restrictedPssSecurityContext">
+      <f:checkbox/>
+    </f:entry>
 
-      <f:entry title="${%Credentials}" field="credentialsId">
-        <c:select/>
-      </f:entry>
+    <f:entry title="${%Credentials}" field="credentialsId">
+      <c:select/>
+    </f:entry>
 
-      <f:validateButton title="${%Test Connection}" progress="${%Testing...}" method="testConnection" with="name,serverUrl,credentialsId,serverCertificate,skipTlsVerify,namespace,connectTimeout,readTimeout,useJenkinsProxy" />
+    <f:validateButton title="${%Test Connection}" progress="${%Testing...}" method="testConnection" with="name,serverUrl,credentialsId,serverCertificate,skipTlsVerify,namespace,connectTimeout,readTimeout,useJenkinsProxy" />
 
-      <f:entry title="${%WebSocket}" field="webSocket">
-        <f:checkbox/>
-      </f:entry>
+    <f:entry title="${%WebSocket}" field="webSocket">
+      <f:checkbox/>
+    </f:entry>
 
-      <f:entry title="${%Direct Connection}" field="directConnection">
-        <f:checkbox default="false" />
-      </f:entry>
+    <f:entry title="${%Direct Connection}" field="directConnection">
+      <f:checkbox default="false" />
+    </f:entry>
 
-      <f:entry title="${%Jenkins URL}" field="jenkinsUrl">
-        <f:textbox />
-      </f:entry>
+    <f:entry title="${%Jenkins URL}" field="jenkinsUrl">
+      <f:textbox />
+    </f:entry>
 
-      <f:entry title="${%Jenkins tunnel}" field="jenkinsTunnel">
-        <f:textbox />
-      </f:entry>
+    <f:entry title="${%Jenkins tunnel}" field="jenkinsTunnel">
+      <f:textbox />
+    </f:entry>
 
-      <f:entry title="${%Connection Timeout (seconds)}" field="connectTimeout">
-        <f:number min="${descriptor.defaultConnectTimeout}" default="${descriptor.defaultConnectTimeout}" checkMethod="post"/>
-      </f:entry>
+    <f:entry title="${%Connection Timeout (seconds)}" field="connectTimeout">
+      <f:number min="${descriptor.defaultConnectTimeout}" default="${descriptor.defaultConnectTimeout}" checkMethod="post"/>
+    </f:entry>
 
-      <f:entry title="${%Read Timeout (seconds)}" field="readTimeout">
-        <f:number min="${descriptor.defaultReadTimeout}" default="${descriptor.defaultReadTimeout}" checkMethod="post"/>
-      </f:entry>
+    <f:entry title="${%Read Timeout (seconds)}" field="readTimeout">
+      <f:number min="${descriptor.defaultReadTimeout}" default="${descriptor.defaultReadTimeout}" checkMethod="post"/>
+    </f:entry>
 
-      <f:entry title="${%Concurrency Limit}" field="containerCapStr">
-        <f:number default=""/>
-      </f:entry>
+    <f:entry title="${%Concurrency Limit}" field="containerCapStr">
+      <f:number default=""/>
+    </f:entry>
 
-      <f:entry title="${%Pod Labels}" field="podLabels">
-        <f:repeatableHeteroProperty field="podLabels" hasHeader="true" addCaption="${%Add Pod Label}"
-                                    deleteCaption="${%Delete Pod Label}" />
-      </f:entry>
+    <f:entry title="${%Pod Labels}" field="podLabels">
+      <f:repeatableHeteroProperty field="podLabels" hasHeader="true" addCaption="${%Add Pod Label}"
+                                  deleteCaption="${%Delete Pod Label}" />
+    </f:entry>
 
-      <f:advanced title="${%Pod Retention}">
-        <f:dropdownDescriptorSelector title="${%Pod Retention}" field="podRetention" 
-            descriptors="${descriptor.allowedPodRetentions}" default="${descriptor.defaultPodRetention}" /> 
-      </f:advanced>
-
-      <f:entry title="${%Max connections to Kubernetes API}" field="maxRequestsPerHostStr">
-        <f:number default="32" checkMethod="post"/>
-      </f:entry>
-
-      <f:entry title="Seconds to wait for pod to be running" field="waitForPodSec">
-        <f:number clazz="required number" min="0" step="1" default="${descriptor.defaultWaitForPod}"/>
-      </f:entry>
-
-      <f:advanced>
-        <f:entry title="${%Container Cleanup Timeout (minutes)}" field="retentionTimeout">
-            <f:number min="${descriptor.defaultRetentionTimeout}" default="${descriptor.defaultRetentionTimeout}" checkMethod="post"/>
-        </f:entry>
-
-        <f:entry title="${%Transfer proxy related environment variables from controller to agent}" field="addMasterProxyEnvVars">
-          <f:checkbox />
-        </f:entry>
-
-        <f:entry title="${%Restrict pipeline support to authorized folders}" field="usageRestricted">
-            <f:checkbox />
-        </f:entry>
-
-        <f:entry title="${%Defaults Provider Template Name}" field="defaultsProviderTemplate">
-          <f:textbox default=""/>
-        </f:entry>
-      </f:advanced>
-    </f:advanced> 
-
-    <f:advanced title="${%Pod Templates}">
-      <f:entry title="${%Pod Templates}" description="${%List of Pods to be launched as agents}">
-        <f:repeatableProperty field="templates" add="${%Add Pod Template}" header="${%Pod Template}">
-          <f:block>
-            <div align="right">
-              <f:repeatableDeleteButton value="${%Delete Pod Template}"/>
-            </div>
-          </f:block>
-        </f:repeatableProperty>
-      </f:entry>
+    <f:advanced title="${%Pod Retention}">
+      <f:dropdownDescriptorSelector title="${%Pod Retention}" field="podRetention"
+          descriptors="${descriptor.allowedPodRetentions}" default="${descriptor.defaultPodRetention}" />
     </f:advanced>
 
+    <f:entry title="${%Max connections to Kubernetes API}" field="maxRequestsPerHostStr">
+      <f:number default="32" checkMethod="post"/>
+    </f:entry>
+
+    <f:entry title="Seconds to wait for pod to be running" field="waitForPodSec">
+      <f:number clazz="required number" min="0" step="1" default="${descriptor.defaultWaitForPod}"/>
+    </f:entry>
+
+    <f:entry title="${%Container Cleanup Timeout (minutes)}" field="retentionTimeout">
+        <f:number min="${descriptor.defaultRetentionTimeout}" default="${descriptor.defaultRetentionTimeout}" checkMethod="post"/>
+    </f:entry>
+
+    <f:entry title="${%Transfer proxy related environment variables from controller to agent}" field="addMasterProxyEnvVars">
+      <f:checkbox />
+    </f:entry>
+
+    <f:entry title="${%Restrict pipeline support to authorized folders}" field="usageRestricted">
+        <f:checkbox />
+    </f:entry>
+
+    <f:entry title="${%Defaults Provider Template Name}" field="defaultsProviderTemplate">
+      <f:textbox default=""/>
+    </f:entry>
+    <f:optionalProperty field="garbageCollection" title="${%Enable garbage collection}"/>
 </j:jelly>

@@ -23,13 +23,20 @@
  */
 package org.csanchez.jenkins.plugins.kubernetes.pod.retention;
 
-
 import static org.awaitility.Awaitility.await;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
+import hudson.Extension;
+import hudson.model.TaskListener;
+import hudson.slaves.ComputerLauncher;
+import hudson.util.StreamTaskListener;
+import io.fabric8.kubernetes.api.model.*;
+import io.fabric8.kubernetes.client.Watcher;
+import io.fabric8.kubernetes.client.server.mock.KubernetesServer;
 import io.fabric8.kubernetes.client.utils.Utils;
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -39,27 +46,15 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-
-import edu.umd.cs.findbugs.annotations.NonNull;
-import hudson.Extension;
-import hudson.model.TaskListener;
-import hudson.slaves.ComputerLauncher;
-import hudson.slaves.OfflineCause;
-import hudson.util.StreamTaskListener;
-import io.fabric8.kubernetes.api.model.*;
-import io.fabric8.kubernetes.client.Watcher;
-import io.fabric8.kubernetes.client.server.mock.KubernetesServer;
 import jenkins.model.Jenkins;
 import okhttp3.mockwebserver.RecordedRequest;
-import org.csanchez.jenkins.plugins.kubernetes.PodTemplate;
 import org.csanchez.jenkins.plugins.kubernetes.*;
-import org.hamcrest.Matchers;
+import org.csanchez.jenkins.plugins.kubernetes.PodTemplate;
 import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExternalResource;
 import org.jvnet.hudson.test.JenkinsRule;
-import org.mockito.ArgumentCaptor;
 
 public class ReaperTest {
 
@@ -83,7 +78,8 @@ public class ReaperTest {
     public void testMaybeActivate() throws IOException, InterruptedException {
         KubernetesCloud cloud = addCloud("k8s", "foo");
         String watchPodsPath = "/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true";
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
@@ -101,7 +97,7 @@ public class ReaperTest {
         assertEquals("node removed from jenkins", j.jenkins.getNodes().size(), 0);
 
         // watch was created
-        assertTrue(r.isWatchingCloud(cloud.name));
+        assertShouldBeWatching(r, cloud);
 
         kubeClientRequests()
                 // expect pod not running to be removed
@@ -133,12 +129,13 @@ public class ReaperTest {
         kubeClientRequests()
                 .assertRequestCountAtLeast("/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true", 1);
         // watch failed to register
-        assertFalse(r.isWatchingCloud(cloud.name));
+        assertShouldNotBeWatching(r, cloud);
     }
 
     @Test
     public void testActivateOnNewComputer() throws IOException, InterruptedException {
-        server.expect().withPath("/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true")
+        server.expect()
+                .withPath("/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true")
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
@@ -154,15 +151,13 @@ public class ReaperTest {
         KubernetesComputer kc = new KubernetesComputer(n2);
 
         // should not be watching the newly created cloud at this point
-        assertFalse("should not be watching cloud", r.isWatchingCloud(cloud.name));
+        assertShouldNotBeWatching(r, cloud);
 
         // fire compute on-line event
         r.preLaunch(kc, tl);
 
         // expect new cloud registered
-        while (!r.isWatchingCloud(cloud.name)) {
-            Thread.sleep(100);
-        }
+        assertShouldBeWatching(r, cloud);
         kubeClientRequests()
                 .assertRequestCountAtLeast("/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true", 1);
     }
@@ -171,13 +166,15 @@ public class ReaperTest {
     public void testReconnectOnNewComputer() throws InterruptedException, IOException {
         KubernetesCloud cloud = addCloud("k8s", "foo");
         String watchPodsPath = "/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true";
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
                 .once();
         // trigger HTTP_GONE status which should result in Watcher#onClose(Exception)
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .waitFor(EVENT_WAIT_PERIOD_MS)
@@ -185,7 +182,8 @@ public class ReaperTest {
                 .done()
                 .once();
         // after Gone error, should reconnect fresh
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
@@ -195,17 +193,14 @@ public class ReaperTest {
         Reaper r = Reaper.getInstance();
         r.maybeActivate();
 
-        waitForKubeClientRequests(2)
-                .assertRequestCount(watchPodsPath, 2);
+        waitForKubeClientRequests(2).assertRequestCount(watchPodsPath, 2);
 
         // error status event should be filtered out
         listener.expectNoEvents();
 
         // wait until watch is removed
         System.out.println("Waiting for watch to be removed");
-        while (r.isWatchingCloud(cloud.name)) {
-            Thread.sleep(250L);
-        }
+        assertShouldNotBeWatching(r, cloud);
         System.out.println("Watch removed");
 
         // launch computer
@@ -216,16 +211,15 @@ public class ReaperTest {
 
         // should have started new watch
         System.out.println("Waiting for a new watch to be started");
-        while (!r.isWatchingCloud(cloud.name)) {
-            Thread.sleep(100);
-        }
+        assertShouldBeWatching(r, cloud);
         System.out.println("Watch started");
     }
 
     @Test(timeout = 10_000)
     public void testAddWatchWhenCloudAdded() throws InterruptedException, IOException {
         String watchPodsPath = "/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true";
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
@@ -244,16 +238,16 @@ public class ReaperTest {
         j.jenkins.clouds.add(cloud);
 
         // watch is added
-        assertTrue("should be watching cloud", r.isWatchingCloud(cloud.name));
-        kubeClientRequests()
-                .assertRequestCountAtLeast(watchPodsPath, 1);
+        assertShouldBeWatching(r, cloud);
+        kubeClientRequests().assertRequestCountAtLeast(watchPodsPath, 1);
     }
 
     @Test(timeout = 10_000)
     public void testRemoveWatchWhenCloudRemoved() throws InterruptedException, IOException {
         KubernetesCloud cloud = addCloud("k8s", "foo");
         String watchPodsPath = "/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true";
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
@@ -264,13 +258,15 @@ public class ReaperTest {
         r.maybeActivate();
 
         // should not be watching the newly created cloud at this point
-        assertTrue("should be watching cloud", r.isWatchingCloud(cloud.name));
+        assertShouldBeWatching(r, cloud);
 
         // invalidate client
         j.jenkins.clouds.remove(cloud);
 
         // watch is removed
-        assertFalse("should not be watching cloud", r.isWatchingCloud(cloud.name));
+        // org.csanchez.jenkins.plugins.kubernetes.pod.retention.Reaper.CloudPodWatcher.onClose() is called in a
+        // separate thread
+        assertShouldNotBeWatching(r, cloud);
     }
 
     @Test(timeout = 10_000)
@@ -286,14 +282,16 @@ public class ReaperTest {
                 .build();
 
         String watchFooPodsPath = "/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true";
-        server.expect().withPath(watchFooPodsPath)
+        server.expect()
+                .withPath(watchFooPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
                 .always();
 
         String watchBarPodsPath = "/api/v1/namespaces/bar/pods?allowWatchBookmarks=true&watch=true";
-        server.expect().withPath(watchBarPodsPath)
+        server.expect()
+                .withPath(watchBarPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .waitFor(EVENT_WAIT_PERIOD_MS)
@@ -301,14 +299,17 @@ public class ReaperTest {
                 .done()
                 .always();
         // don't remove pod on activate
-        server.expect().withPath("/api/v1/namespaces/bar/pods/node-123").andReturn(200, node123).once();
+        server.expect()
+                .withPath("/api/v1/namespaces/bar/pods/node-123")
+                .andReturn(200, node123)
+                .once();
 
         // activate reaper
         Reaper r = Reaper.getInstance();
         r.maybeActivate();
 
         // should not be watching the newly created cloud at this point
-        assertTrue("should be watching cloud", r.isWatchingCloud(cloud.name));
+        assertShouldBeWatching(r, cloud);
 
         // invalidate client
         cloud.setNamespace("bar");
@@ -317,25 +318,25 @@ public class ReaperTest {
         KubernetesSlave node = addNode(cloud, "node-123", "node");
 
         // watch is still active
-        assertTrue("should be watching cloud", r.isWatchingCloud(cloud.name));
+        assertShouldBeWatching(r, cloud);
 
-        listener.waitForEvents()
-                .expectEvent(Watcher.Action.MODIFIED, node);
-        kubeClientRequests()
-                .assertRequestCountAtLeast(watchBarPodsPath, 1);
+        listener.waitForEvents().expectEvent(Watcher.Action.MODIFIED, node);
+        kubeClientRequests().assertRequestCountAtLeast(watchBarPodsPath, 1);
     }
 
     @Test(timeout = 10_000)
     public void testStopWatchingOnCloseException() throws InterruptedException {
         KubernetesCloud cloud = addCloud("k8s", "foo");
         String watchPodsPath = "/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true";
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
                 .once();
         // trigger HTTP_GONE status which should result in Watcher#onClose(Exception)
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .waitFor(EVENT_WAIT_PERIOD_MS)
@@ -347,24 +348,21 @@ public class ReaperTest {
         Reaper r = Reaper.getInstance();
         r.maybeActivate();
 
-        waitForKubeClientRequests(2)
-                .assertRequestCount(watchPodsPath, 2);
+        waitForKubeClientRequests(2).assertRequestCount(watchPodsPath, 2);
 
         // error status event should be filtered out
         listener.expectNoEvents();
 
         // watch is removed
-        while (r.isWatchingCloud(cloud.name)) {
-            Thread.sleep(250L);
-        }
-        assertFalse(r.isWatchingCloud(cloud.name));
+        assertShouldNotBeWatching(r, cloud);
     }
 
     @Test(timeout = 10_000)
     public void testKeepWatchingOnKubernetesApiServerError() throws InterruptedException {
         KubernetesCloud cloud = addCloud("k8s", "foo");
         String watchPodsPath = "/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true";
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .waitFor(EVENT_WAIT_PERIOD_MS)
@@ -373,12 +371,14 @@ public class ReaperTest {
                 .once();
         // trigger error action event
         server.expect().withPath(watchPodsPath).andReturnChunked(500).once();
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
                 .once();
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
@@ -389,14 +389,13 @@ public class ReaperTest {
         Reaper r = Reaper.getInstance();
         r.maybeActivate();
 
-        waitForKubeClientRequests(3)
-                .assertRequestCount(watchPodsPath, 3);
+        waitForKubeClientRequests(3).assertRequestCount(watchPodsPath, 3);
 
         // error status event should be filtered out
         listener.expectNoEvents();
 
         // watch is still active
-        assertTrue(r.isWatchingCloud(cloud.name));
+        assertShouldBeWatching(r, cloud);
     }
 
     @Test(timeout = 10_000)
@@ -408,29 +407,34 @@ public class ReaperTest {
         status.setStatus("Unknown");
         status.setReason("Some reason");
         status.setCode(200);
-        server.expect().withPath(watchPodsPath)
-                .andReturnChunked(200, new WatchEvent(status, "ERROR"))
+        server.expect()
+                .withPath(watchPodsPath)
+                .andUpgradeToWebSocket()
+                .open()
+                .immediately()
+                .andEmit(new WatchEvent(status, "ERROR"))
+                .done()
                 .once();
 
         // activate reaper
         Reaper r = Reaper.getInstance();
         r.maybeActivate();
 
-        waitForKubeClientRequests(2)
-                .assertRequestCount(watchPodsPath, 2);
+        waitForKubeClientRequests(2).assertRequestCount(watchPodsPath, 2);
 
         // error status event should be filtered out
         listener.expectNoEvents();
 
         // watch is still active
-        assertTrue(r.isWatchingCloud(cloud.name));
+        assertShouldBeWatching(r, cloud);
     }
 
     @Test
     public void testCloseWatchersOnShutdown() throws InterruptedException {
         String watchPodsPath = "/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true";
 
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .done()
@@ -446,17 +450,13 @@ public class ReaperTest {
         r.maybeActivate();
 
         // watching cloud
-        assertTrue(r.isWatchingCloud(cloud.name));
-        assertTrue(r.isWatchingCloud(cloud2.name));
-        assertTrue(r.isWatchingCloud(cloud3.name));
+        assertShouldBeWatching(r, cloud, cloud2, cloud3);
 
         // trigger shutdown listener
         new Reaper.ReaperShutdownListener().onBeforeShutdown();
 
         // watchers removed
-        await().until(() -> r.isWatchingCloud(cloud.name), is(false));
-        await().until(() -> r.isWatchingCloud(cloud2.name), is(false));
-        await().until(() -> r.isWatchingCloud(cloud3.name), is(false));
+        assertShouldNotBeWatching(r, cloud, cloud2, cloud3);
     }
 
     @Test(timeout = 10_000)
@@ -465,7 +465,8 @@ public class ReaperTest {
         KubernetesSlave node = addNode(cloud, "node-123", "node");
         Pod node123 = createPod(node);
 
-        server.expect().withPath("/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true")
+        server.expect()
+                .withPath("/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true")
                 .andUpgradeToWebSocket()
                 .open()
                 .waitFor(EVENT_WAIT_PERIOD_MS)
@@ -473,9 +474,12 @@ public class ReaperTest {
                 .waitFor(EVENT_WAIT_PERIOD_MS)
                 .andEmit(new WatchEvent(node123, "BOOKMARK"))
                 .done()
-        .always();
+                .always();
         // don't remove pod on activate
-        server.expect().withPath("/api/v1/namespaces/foo/pods/node-123").andReturn(200, node123).once();
+        server.expect()
+                .withPath("/api/v1/namespaces/foo/pods/node-123")
+                .andReturn(200, node123)
+                .once();
 
         // activate reaper
         Reaper r = Reaper.getInstance();
@@ -505,7 +509,8 @@ public class ReaperTest {
         Pod node123 = withContainerStatusTerminated(createPod(node));
 
         String watchPodsPath = "/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true";
-        server.expect().withPath("/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true")
+        server.expect()
+                .withPath("/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true")
                 .andUpgradeToWebSocket()
                 .open()
                 .waitFor(EVENT_WAIT_PERIOD_MS)
@@ -513,13 +518,22 @@ public class ReaperTest {
                 .waitFor(EVENT_WAIT_PERIOD_MS)
                 .andEmit(new WatchEvent(node123, "BOOKMARK"))
                 .done()
-        .always();
+                .always();
         // don't remove pod on activate
-        server.expect().withPath("/api/v1/namespaces/foo/pods/node-123").andReturn(200, node123).once();
+        server.expect()
+                .withPath("/api/v1/namespaces/foo/pods/node-123")
+                .andReturn(200, node123)
+                .once();
         // Get logs
         server.expect()
                 .withPath("/api/v1/namespaces/foo/pods?fieldSelector=" + Utils.toUrlEncoded("metadata.name=node-123"))
-                .andReturn(200, new PodListBuilder().withNewMetadata().endMetadata().withItems(node123).build())
+                .andReturn(
+                        200,
+                        new PodListBuilder()
+                                .withNewMetadata()
+                                .endMetadata()
+                                .withItems(node123)
+                                .build())
                 .always();
         server.expect()
                 .withPath("/api/v1/namespaces/foo/pods/node-123/log?pretty=false&tailLines=30")
@@ -552,7 +566,8 @@ public class ReaperTest {
         Pod node123 = createPod(node);
         node123.getStatus().setPhase("Failed");
 
-        server.expect().withPath("/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true")
+        server.expect()
+                .withPath("/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true")
                 .andUpgradeToWebSocket()
                 .open()
                 .waitFor(EVENT_WAIT_PERIOD_MS)
@@ -560,9 +575,12 @@ public class ReaperTest {
                 .waitFor(EVENT_WAIT_PERIOD_MS)
                 .andEmit(new WatchEvent(node123, "BOOKMARK"))
                 .done()
-        .always();
+                .always();
         // don't remove pod on activate
-        server.expect().withPath("/api/v1/namespaces/foo/pods/node-123").andReturn(200, node123).once();
+        server.expect()
+                .withPath("/api/v1/namespaces/foo/pods/node-123")
+                .andReturn(200, node123)
+                .once();
 
         // activate reaper
         Reaper r = Reaper.getInstance();
@@ -572,8 +590,7 @@ public class ReaperTest {
         assertEquals("jenkins nodes", j.jenkins.getNodes().size(), 1);
 
         // verify listener got notified
-        listener.waitForEvents()
-                .expectEvent(Watcher.Action.MODIFIED, node);
+        listener.waitForEvents().expectEvent(Watcher.Action.MODIFIED, node);
 
         // expect node to be terminated
         verify(node, atLeastOnce()).terminate();
@@ -590,7 +607,8 @@ public class ReaperTest {
         Pod node123 = withContainerImagePullBackoff(createPod(node));
 
         String watchPodsPath = "/api/v1/namespaces/foo/pods?allowWatchBookmarks=true&watch=true";
-        server.expect().withPath(watchPodsPath)
+        server.expect()
+                .withPath(watchPodsPath)
                 .andUpgradeToWebSocket()
                 .open()
                 .waitFor(EVENT_WAIT_PERIOD_MS)
@@ -598,9 +616,12 @@ public class ReaperTest {
                 .waitFor(EVENT_WAIT_PERIOD_MS)
                 .andEmit(new WatchEvent(node123, "BOOKMARK"))
                 .done()
-        .always();
+                .always();
         // don't remove pod on activate
-        server.expect().withPath("/api/v1/namespaces/foo/pods/node-123").andReturn(200, node123).once();
+        server.expect()
+                .withPath("/api/v1/namespaces/foo/pods/node-123")
+                .andReturn(200, node123)
+                .once();
 
         // activate reaper
         Reaper r = Reaper.getInstance();
@@ -610,8 +631,7 @@ public class ReaperTest {
         assertEquals("jenkins nodes", j.jenkins.getNodes().size(), 1);
 
         // wait for the delete event to be processed
-        waitForKubeClientRequests(6)
-                .assertRequestCountAtLeast(watchPodsPath, 3);
+        waitForKubeClientRequests(6).assertRequestCountAtLeast(watchPodsPath, 3);
 
         // verify listener got notified
         listener.expectEvent(Watcher.Action.MODIFIED, node);
@@ -636,10 +656,12 @@ public class ReaperTest {
 
     private Pod withContainerStatusTerminated(Pod pod) {
         PodStatus podStatus = pod.getStatus();
-        podStatus.getConditions().add(new PodConditionBuilder()
-                .withType("Ready")
-                .withStatus("True")
-                .build());
+        podStatus
+                .getConditions()
+                .add(new PodConditionBuilder()
+                        .withType("Ready")
+                        .withStatus("True")
+                        .build());
         ContainerStatus status = new ContainerStatusBuilder()
                 .withNewState()
                 .withNewTerminated()
@@ -748,7 +770,8 @@ public class ReaperTest {
         private final Map<String, Long> countByPath;
 
         CapturedRequests(List<RecordedRequest> requests) {
-            this.countByPath = requests.stream().collect(Collectors.groupingBy(RecordedRequest::getPath, Collectors.counting()));
+            this.countByPath =
+                    requests.stream().collect(Collectors.groupingBy(RecordedRequest::getPath, Collectors.counting()));
         }
 
         CapturedRequests assertRequestCount(String path, long count) {
@@ -768,7 +791,12 @@ public class ReaperTest {
         private static final List<ReaperListenerWatchEvent> CAPTURED_EVENTS = new LinkedList<>();
 
         @Override
-        public synchronized void onEvent(@NonNull Watcher.Action action, @NonNull KubernetesSlave node, @NonNull Pod pod, @NonNull Set<String> terminationReaons) throws IOException, InterruptedException {
+        public synchronized void onEvent(
+                @NonNull Watcher.Action action,
+                @NonNull KubernetesSlave node,
+                @NonNull Pod pod,
+                @NonNull Set<String> terminationReaons)
+                throws IOException, InterruptedException {
             CAPTURED_EVENTS.add(new ReaperListenerWatchEvent(action, node, pod));
             notifyAll();
         }
@@ -776,7 +804,8 @@ public class ReaperTest {
         /**
          * Test should use {@link #waitForEvents()}, not this method
          */
-        private synchronized CapturingReaperListener waitForEventsOnJenkinsExtensionInstance() throws InterruptedException {
+        private synchronized CapturingReaperListener waitForEventsOnJenkinsExtensionInstance()
+                throws InterruptedException {
             while (CAPTURED_EVENTS.isEmpty()) {
                 wait();
             }
@@ -790,7 +819,8 @@ public class ReaperTest {
          */
         public CapturingReaperListener waitForEvents() throws InterruptedException {
             // find the instance that Jenkins created and wait on that one
-            CapturingReaperListener l = Jenkins.get().getExtensionList(Reaper.Listener.class).get(CapturingReaperListener.class);
+            CapturingReaperListener l =
+                    Jenkins.get().getExtensionList(Reaper.Listener.class).get(CapturingReaperListener.class);
             if (l == null) {
                 throw new RuntimeException("CapturingReaperListener not registered in Jenkins");
             }
@@ -843,7 +873,8 @@ public class ReaperTest {
                 .withType(Watcher.Action.ERROR.name())
                 .withNewStatusObject()
                 .withCode(HttpURLConnection.HTTP_GONE)
-                .withMessage("410: The event in requested index is outdated and cleared (the requested history has been cleared [3/1]) [2]")
+                .withMessage(
+                        "410: The event in requested index is outdated and cleared (the requested history has been cleared [3/1]) [2]")
                 .endStatusObject()
                 .build();
     }
@@ -856,5 +887,17 @@ public class ReaperTest {
                 .withMessage("500: Internal error")
                 .endStatusObject()
                 .build();
+    }
+
+    private static void assertShouldBeWatching(Reaper r, KubernetesCloud... clouds) {
+        for (KubernetesCloud cloud : clouds) {
+            await("should be watching cloud " + cloud.name).until(() -> r.isWatchingCloud(cloud.name));
+        }
+    }
+
+    private static void assertShouldNotBeWatching(Reaper r, KubernetesCloud... clouds) {
+        for (KubernetesCloud cloud : clouds) {
+            await("should not be watching cloud " + cloud.name).until(() -> !r.isWatchingCloud(cloud.name));
+        }
     }
 }

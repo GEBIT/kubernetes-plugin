@@ -1,27 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <groupId>org.jenkins-ci.plugins</groupId>
     <artifactId>plugin</artifactId>
     <!-- downgraded from 4.70 because of https://jira.gebit.de/browse/DINF-729 -->
+    <!-- 
     <version>4.54</version>
-    <relativePath/>
+     -->
+    <version>4.82</version>
+    <relativePath />
   </parent>
 
   <groupId>org.csanchez.jenkins.plugins</groupId>
   <artifactId>kubernetes</artifactId>
   <version>${changelist}</version>
+  <packaging>hpi</packaging>
   <name>Kubernetes plugin</name>
   <description>Jenkins plugin to run dynamic agents in a Kubernetes cluster</description>
-  <packaging>hpi</packaging>
   <url>https://github.com/jenkinsci/${project.artifactId}-plugin</url>
-
-  <scm>
-    <connection>scm:git:https://github.com/${gitHubRepo}.git</connection>
-    <developerConnection>scm:git:https://github.com/${gitHubRepo}.git</developerConnection>
-    <url>https://github.com/${gitHubRepo}</url>
-    <tag>${scmTag}</tag>
-  </scm>
 
   <licenses>
     <license>
@@ -39,6 +36,13 @@
     </developer>
   </developers>
 
+  <scm>
+    <connection>scm:git:https://github.com/${gitHubRepo}.git</connection>
+    <developerConnection>scm:git:https://github.com/${gitHubRepo}.git</developerConnection>
+    <tag>${scmTag}</tag>
+    <url>https://github.com/${gitHubRepo}</url>
+  </scm>
+
   <properties>
     <changelist>999999-SNAPSHOT</changelist>
     <!-- in minikube
@@ -46,38 +50,62 @@
     <connectorHost />
     <jenkins.host.address />
     <slaveAgentPort />
-    <!-- TODO fix KubernetesCloudTest todos once past 2.414 -->
-    <jenkins.version>2.401.1</jenkins.version>
-    <bom>2.401.x</bom>
-    <bom.version>2357.v1043f8578392</bom.version>
+    <jenkins.version>2.426.3</jenkins.version>
+    <bom>2.426.x</bom>
+    <bom.version>2857.v01a_0144eb_20b_</bom.version>
     <no-test-jar>false</no-test-jar>
     <useBeta>true</useBeta>
     <gitHubRepo>jenkinsci/${project.artifactId}-plugin</gitHubRepo>
     <spotbugs.effort>Max</spotbugs.effort>
     <spotbugs.threshold>Low</spotbugs.threshold>
+    <spotless.check.skip>false</spotless.check.skip>
+
     <!-- GEBIT: versions to be used for gebit-build support -->
     <version.tiles>2.8-gebit37</version.tiles>
     <version.gebit-build-extension>1.2.2</version.gebit-build-extension>
-    <version.gebit-forked>1.0.0</version.gebit-forked>
-    <!-- set latest jenkins-test-harness version, probably a side effect of downgrading the parent version.
-    if not set, tests wont compile -->
-    <jenkins-test-harness.version>2044.v03c87927ff5c</jenkins-test-harness.version>
+    <version.gebit-forked>1.0.3-SNAPSHOT</version.gebit-forked>
+    <version.maven-enforcer-plugin>3.2.1</version.maven-enforcer-plugin>
+    <!-- disable (gebit) enforcer until we have updated it in gebit-build-parent -->
+    <enforce.skip>true</enforce.skip>
     <!-- GEBIT: end -->
   </properties>
-  
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.jenkins.tools.bom</groupId>
+        <artifactId>bom-${bom}</artifactId>
+        <version>${bom.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.squareup.okhttp3</groupId>
+        <artifactId>mockwebserver</artifactId>
+        <!-- transitive dep of io.fabric8:kubernetes-server-mock, needs alignment with okhttp-api -->
+        <version>4.11.0</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <dependency>
-      <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>kubernetes-client-api</artifactId>
-      <version>6.8.1-224.vd388fca_4db_3b_</version>
+      <groupId>io.jenkins.plugins</groupId>
+      <artifactId>caffeine-api</artifactId>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>jackson2-api</artifactId>
+      <artifactId>authentication-tokens</artifactId>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>structs</artifactId>
+      <artifactId>cloud-stats</artifactId>
+    </dependency>
+
+    <dependency>
+      <!-- Requires Permission -->
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>cloudbees-folder</artifactId>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
@@ -85,22 +113,7 @@
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>plain-credentials</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.jenkinsci.plugins</groupId>
-      <artifactId>kubernetes-credentials</artifactId>
-      <version>0.11</version>
-    </dependency>
-    <dependency>
-      <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>authentication-tokens</artifactId>
-      <version>1.53.v1c90fd9191a_b_</version>
-    </dependency>
-
-    <dependency> <!-- Requires Permission -->
-      <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>cloudbees-folder</artifactId>
+      <artifactId>credentials-binding</artifactId>
     </dependency>
 
     <dependency>
@@ -109,125 +122,64 @@
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>variant</artifactId>
+      <artifactId>jackson2-api</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.jenkins-ci.plugins.workflow</groupId>
-      <artifactId>workflow-step-api</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.jenkins-ci.plugins.workflow</groupId>
-      <artifactId>workflow-api</artifactId>
-      <version>1267.vd9b_a_ddd9eb_47</version>
-    </dependency>
-    <dependency> <!-- DeclarativeAgent -->
-      <groupId>org.jenkinsci.plugins</groupId>
-      <artifactId>pipeline-model-extensions</artifactId>
-      <optional>true</optional>
-    </dependency>
-    <dependency> <!-- DeclarativeGeneratorTester -->
-      <groupId>org.jenkinsci.plugins</groupId>
-      <artifactId>pipeline-model-definition</artifactId>
-      <classifier>tests</classifier>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.jenkins-ci.plugins.workflow</groupId>
-      <artifactId>workflow-cps</artifactId>
-      <optional>true</optional>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>kubernetes-client-api</artifactId>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
       <artifactId>metrics</artifactId>
     </dependency>
     <dependency>
-      <groupId>io.jenkins.plugins</groupId>
-      <artifactId>caffeine-api</artifactId>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>plain-credentials</artifactId>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>credentials-binding</artifactId>
+      <artifactId>structs</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>variant</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-cps</artifactId>
+      <optional>true</optional>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins.workflow</groupId>
       <artifactId>workflow-durable-task-step</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>cloud-stats</artifactId>
-      <version>0.27</version>
-    </dependency>
-
-    <!-- for testing -->
-    <dependency>
       <groupId>org.jenkins-ci.plugins.workflow</groupId>
-      <artifactId>workflow-job</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.jenkins-ci.plugins.workflow</groupId>
-      <artifactId>workflow-basic-steps</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency> <!-- SemaphoreStep -->
-      <groupId>org.jenkins-ci.plugins.workflow</groupId>
-      <artifactId>workflow-support</artifactId>
-      <classifier>tests</classifier>
-      <scope>test</scope>
+      <artifactId>workflow-step-api</artifactId>
     </dependency>
     <dependency>
       <groupId>org.jenkinsci.plugins</groupId>
-      <artifactId>pipeline-model-definition</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency> <!-- SnippetizerTest -->
-      <groupId>org.jenkins-ci.plugins.workflow</groupId>
-      <artifactId>workflow-cps</artifactId>
-      <classifier>tests</classifier>
-      <scope>test</scope>
+      <artifactId>kubernetes-credentials</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.mockito</groupId>
-      <artifactId>mockito-core</artifactId>
-      <scope>test</scope>
+      <!-- DeclarativeAgent -->
+      <groupId>org.jenkinsci.plugins</groupId>
+      <artifactId>pipeline-model-extensions</artifactId>
+      <optional>true</optional>
     </dependency>
     <dependency>
-      <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>git</artifactId>
-      <scope>test</scope>
+      <groupId>org.json</groupId>
+      <artifactId>json</artifactId>
+      <version>20240205</version>
     </dependency>
     <dependency>
-      <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>git</artifactId>
-      <classifier>tests</classifier>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>scm-api</artifactId>
-      <scope>test</scope>
-      <classifier>tests</classifier>
-    </dependency>
-    <!-- for ContainerExecDecoratorPipelineTest -->
-    <dependency>
-      <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>ssh-agent</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>ssh-credentials</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.jenkins-ci.plugins</groupId>
-      <artifactId>bouncycastle-api</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>pl.pragmatists</groupId>
-      <artifactId>JUnitParams</artifactId>
-      <version>1.1.1</version>
+      <groupId>io.fabric8</groupId>
+      <artifactId>kubernetes-server-mock</artifactId>
+      <version>6.10.0</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -241,9 +193,30 @@
       <scope>test</scope>
     </dependency>
     <dependency>
+      <groupId>org.awaitility</groupId>
+      <artifactId>awaitility</artifactId>
+      <version>4.2.1</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>bouncycastle-api</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
       <artifactId>docker-workflow</artifactId>
-      <version>572.v950f58993843</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>git</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>git</artifactId>
+      <classifier>tests</classifier>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -253,53 +226,87 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>io.fabric8</groupId>
-      <artifactId>kubernetes-server-mock</artifactId>
-      <version>6.8.1</version>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>scm-api</artifactId>
+      <classifier>tests</classifier>
       <scope>test</scope>
-      <exclusions>
-        <exclusion>
-          <groupId>org.junit.jupiter</groupId>
-          <artifactId>junit-jupiter-api</artifactId>
-        </exclusion>
-      </exclusions>
     </dependency>
+    <!-- for ContainerExecDecoratorPipelineTest -->
     <dependency>
-      <groupId>io.jenkins.plugins</groupId>
-      <artifactId>plugin-util-api</artifactId>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>ssh-agent</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.awaitility</groupId>
-      <artifactId>awaitility</artifactId>
-      <version>4.2.0</version>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>ssh-credentials</artifactId>
       <scope>test</scope>
-      <exclusions>
-        <exclusion>
-          <groupId>org.hamcrest</groupId>
-          <artifactId>hamcrest</artifactId>
-        </exclusion>
-      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-basic-steps</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <!-- SnippetizerTest -->
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-cps</artifactId>
+      <classifier>tests</classifier>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- for testing -->
+    <dependency>
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-job</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <!-- SemaphoreStep -->
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-support</artifactId>
+      <classifier>tests</classifier>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <!-- DeclarativeGeneratorTester -->
+      <groupId>org.jenkinsci.plugins</groupId>
+      <artifactId>pipeline-model-definition</artifactId>
+      <classifier>tests</classifier>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkinsci.plugins</groupId>
+      <artifactId>pipeline-model-definition</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>pl.pragmatists</groupId>
+      <artifactId>JUnitParams</artifactId>
+      <version>1.1.1</version>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 
+  <!-- get every artifact through repo.jenkins-ci.org, which proxies all the artifacts that we need -->
+  <repositories>
+    <repository>
+      <id>repo.jenkins-ci.org</id>
+      <url>https://repo.jenkins-ci.org/public/</url>
+    </repository>
+  </repositories>
 
-  <dependencyManagement>
-    <dependencies>
-      <dependency>
-        <groupId>io.jenkins.tools.bom</groupId>
-        <artifactId>bom-${bom}</artifactId>
-        <version>${bom.version}</version>
-        <scope>import</scope>
-        <type>pom</type>
-      </dependency>
-      <dependency>
-        <groupId>com.squareup.okhttp3</groupId>
-        <artifactId>mockwebserver</artifactId>
-        <version>4.9.3</version><!-- should be aligned with the version provided by okhttp-api-plugin -->
-      </dependency>
-    </dependencies>
-  </dependencyManagement>
+  <pluginRepositories>
+    <pluginRepository>
+      <id>repo.jenkins-ci.org</id>
+      <url>https://repo.jenkins-ci.org/public/</url>
+    </pluginRepository>
+  </pluginRepositories>
 
   <build>
     <plugins>
@@ -332,41 +339,56 @@
           </systemProperties>
         </configuration>
       </plugin>
-	  <plugin>
-		<groupId>io.repaint.maven</groupId>
-		<artifactId>tiles-maven-plugin</artifactId>
-		<version>${version.tiles}</version>
-		<extensions>true</extensions>
-		<configuration>
-			<tiles combine.children="append">
-				<tile>de.gebit.build.forked.tile:jenkins-plugin:${version.gebit-forked}</tile>
-			</tiles>
-		</configuration>
-	  </plugin>
+
+      <plugin>
+        <groupId>io.repaint.maven</groupId>
+        <artifactId>tiles-maven-plugin</artifactId>
+        <version>${version.tiles}</version>
+        <extensions>true</extensions>
+        <configuration>
+          <tiles combine.children="append">
+            <tile>de.gebit.build.forked.tile:jenkins-plugin:${version.gebit-forked}</tile>
+          </tiles>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>enforce-okhttp-consistency</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireSameVersions>
+                  <dependencies>
+                    <dependency>com.squareup.okhttp3:mockwebserver</dependency>
+                    <dependency>com.squareup.okhttp3:okhttp:jar</dependency>
+                    <dependency>com.squareup.okhttp3:logging-interceptor</dependency>
+                  </dependencies>
+                </requireSameVersions>
+                <requireSameVersions>
+                  <dependencies>
+                    <dependency>io.fabric8:kubernetes-server-mock</dependency>
+                    <dependency>io.fabric8:kubernetes-client</dependency>
+                  </dependencies>
+                </requireSameVersions>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
     <extensions>
-        <extension>
-            <groupId>de.gebit.build.maven</groupId>
-            <artifactId>gebit-build-extension</artifactId>
-            <version>${version.gebit-build-extension}</version>
-        </extension>
+      <extension>
+        <groupId>de.gebit.build.maven</groupId>
+        <artifactId>gebit-build-extension</artifactId>
+        <version>${version.gebit-build-extension}</version>
+      </extension>
     </extensions>
   </build>
-
-  <!-- get every artifact through repo.jenkins-ci.org, which proxies all the artifacts that we need -->
-  <repositories>
-    <repository>
-      <id>repo.jenkins-ci.org</id>
-      <url>https://repo.jenkins-ci.org/public/</url>
-    </repository>
-  </repositories>
-
-  <pluginRepositories>
-    <pluginRepository>
-      <id>repo.jenkins-ci.org</id>
-      <url>https://repo.jenkins-ci.org/public/</url>
-    </pluginRepository>
-  </pluginRepositories>
 
   <profiles>
     <profile>

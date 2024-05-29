@@ -1,42 +1,14 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
-import edu.umd.cs.findbugs.annotations.NonNull;
-import java.io.IOException;
-import java.util.HashSet;
-import java.util.Locale;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import static org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud.JNLP_NAME;
 
 import edu.umd.cs.findbugs.annotations.CheckForNull;
+import edu.umd.cs.findbugs.annotations.NonNull;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
-import hudson.FilePath;
-import hudson.Util;
-import hudson.slaves.SlaveComputer;
-import io.fabric8.kubernetes.api.model.Container;
-import io.fabric8.kubernetes.client.utils.Serialization;
-import jenkins.metrics.api.Metrics;
-import org.apache.commons.lang.RandomStringUtils;
-import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang.Validate;
-import org.csanchez.jenkins.plugins.kubernetes.pod.retention.PodRetention;
-import org.jenkinsci.plugins.cloudstats.ProvisioningActivity.Id;
-import org.jenkinsci.plugins.cloudstats.TrackedItem;
-import org.jenkinsci.plugins.durabletask.executors.OnceRetentionStrategy;
-import org.jenkinsci.plugins.kubernetes.auth.KubernetesAuthException;
-import org.jenkinsci.plugins.workflow.flow.FlowExecutionOwner;
-import org.jvnet.localizer.ResourceBundleHolder;
-import org.kohsuke.stapler.DataBoundConstructor;
-
 import hudson.Extension;
+import hudson.FilePath;
 import hudson.Launcher;
+import hudson.Util;
 import hudson.console.ModelHyperlinkNote;
 import hudson.model.Computer;
 import hudson.model.Descriptor;
@@ -52,13 +24,39 @@ import hudson.slaves.Cloud;
 import hudson.slaves.CloudRetentionStrategy;
 import hudson.slaves.ComputerLauncher;
 import hudson.slaves.RetentionStrategy;
+import hudson.slaves.SlaveComputer;
+import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
+import io.fabric8.kubernetes.client.utils.Serialization;
+import java.io.IOException;
+import java.time.Instant;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import jenkins.metrics.api.Metrics;
 import jenkins.model.Jenkins;
 import jenkins.security.MasterToSlaveCallable;
-
-import static org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud.JNLP_NAME;
+import org.apache.commons.lang.RandomStringUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.Validate;
+import org.csanchez.jenkins.plugins.kubernetes.pod.retention.PodRetention;
+import org.jenkinsci.plugins.cloudstats.ProvisioningActivity.Id;
+import org.jenkinsci.plugins.cloudstats.TrackedItem;
+import org.jenkinsci.plugins.durabletask.executors.OnceRetentionStrategy;
+import org.jenkinsci.plugins.kubernetes.auth.KubernetesAuthException;
+import org.jenkinsci.plugins.workflow.flow.FlowExecutionOwner;
+import org.jvnet.localizer.ResourceBundleHolder;
+import org.kohsuke.stapler.DataBoundConstructor;
 
 /**
  * @author Carlos Sanchez carlos@apache.org
@@ -67,8 +65,8 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
 
     private static final Logger LOGGER = Logger.getLogger(KubernetesSlave.class.getName());
 
-    private static final Integer DISCONNECTION_TIMEOUT = Integer
-            .getInteger(KubernetesSlave.class.getName() + ".disconnectionTimeout", 5);
+    private static final Integer DISCONNECTION_TIMEOUT =
+            Integer.getInteger(KubernetesSlave.class.getName() + ".disconnectionTimeout", 5);
 
     private static final long serialVersionUID = -8642936855413034232L;
     private static final String DEFAULT_AGENT_PREFIX = "jenkins-agent";
@@ -80,8 +78,10 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
 
     private final String cloudName;
     private String namespace;
+
     @NonNull
     private String podTemplateId;
+
     private transient PodTemplate template;
     private transient Set<Queue.Executable> executables = new HashSet<>();
 
@@ -134,7 +134,8 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
                 if (executable != null) {
                     Queue.Executable parentExecutable = executable.getParentExecutable();
                     if (parentExecutable instanceof FlowExecutionOwner.Executable) {
-                        FlowExecutionOwner flowExecutionOwner = ((FlowExecutionOwner.Executable) parentExecutable).asFlowExecutionOwner();
+                        FlowExecutionOwner flowExecutionOwner =
+                                ((FlowExecutionOwner.Executable) parentExecutable).asFlowExecutionOwner();
                         if (flowExecutionOwner != null) {
                             try {
                                 return flowExecutionOwner.getListener();
@@ -144,7 +145,8 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
                         }
                     }
                 }
-                // TODO handle freestyle and similar if executable instanceof Run, by capturing a TaskListener from RunListener.onStarted
+                // TODO handle freestyle and similar if executable instanceof Run, by capturing a TaskListener from
+                // RunListener.onStarted
             }
         }
         return TaskListener.NULL;
@@ -166,15 +168,20 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
     @Deprecated
     public KubernetesSlave(PodTemplate template, String nodeDescription, KubernetesCloud cloud, Label label)
             throws Descriptor.FormException, IOException {
-        this(template, nodeDescription, cloud.name, label.toString(), new OnceRetentionStrategy(cloud.getRetentionTimeout())) ;
+        this(
+                template,
+                nodeDescription,
+                cloud.name,
+                label.toString(),
+                new OnceRetentionStrategy(cloud.getRetentionTimeout()));
     }
 
     /**
      * @deprecated Use {@link Builder} instead.
      */
     @Deprecated
-    public KubernetesSlave(PodTemplate template, String nodeDescription, KubernetesCloud cloud, String labelStr,
-                           RetentionStrategy rs)
+    public KubernetesSlave(
+            PodTemplate template, String nodeDescription, KubernetesCloud cloud, String labelStr, RetentionStrategy rs)
             throws Descriptor.FormException, IOException {
         this(template, nodeDescription, cloud.name, labelStr, rs);
     }
@@ -184,14 +191,20 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
      */
     @Deprecated
     @DataBoundConstructor // make stapler happy. Not actually used.
-    public KubernetesSlave(PodTemplate template, String nodeDescription, String cloudName, String labelStr,
-                           RetentionStrategy rs)
+    public KubernetesSlave(
+            PodTemplate template, String nodeDescription, String cloudName, String labelStr, RetentionStrategy rs)
             throws Descriptor.FormException, IOException {
         this(getSlaveName(template), template, nodeDescription, cloudName, labelStr, new KubernetesLauncher(), rs);
     }
 
-    protected KubernetesSlave(String name, @NonNull PodTemplate template, String nodeDescription, String cloudName, String labelStr,
-                           ComputerLauncher computerLauncher, RetentionStrategy rs)
+    protected KubernetesSlave(
+            String name,
+            @NonNull PodTemplate template,
+            String nodeDescription,
+            String cloudName,
+            String labelStr,
+            ComputerLauncher computerLauncher,
+            RetentionStrategy rs)
             throws Descriptor.FormException, IOException {
         super(name, null, computerLauncher);
         setNodeDescription(nodeDescription);
@@ -224,15 +237,20 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
 
     private String remoteFS;
 
-    @SuppressFBWarnings(value = "NM_CONFUSING", justification = "Naming confusion with a getRemoteFs method, but the latter is deprecated.")
+    @SuppressFBWarnings(
+            value = "NM_CONFUSING",
+            justification = "Naming confusion with a getRemoteFs method, but the latter is deprecated.")
     @Override
     public String getRemoteFS() {
         if (remoteFS == null) {
             Optional<Pod> optionalPod = getPod();
             if (optionalPod.isPresent()) {
-                Optional<Container> optionalJnlp = optionalPod.get().getSpec().getContainers().stream().filter(c -> JNLP_NAME.equals(c.getName())).findFirst();
+                Optional<Container> optionalJnlp = optionalPod.get().getSpec().getContainers().stream()
+                        .filter(c -> JNLP_NAME.equals(c.getName()))
+                        .findFirst();
                 if (optionalJnlp.isPresent()) {
-                    remoteFS = StringUtils.defaultIfBlank(optionalJnlp.get().getWorkingDir(), ContainerTemplate.DEFAULT_WORKING_DIR);
+                    remoteFS = StringUtils.defaultIfBlank(
+                            optionalJnlp.get().getWorkingDir(), ContainerTemplate.DEFAULT_WORKING_DIR);
                 }
             }
         }
@@ -261,7 +279,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
     }
 
     public Optional<Pod> getPod() {
-        return pod == null ? Optional.empty() : Optional.of(pod);
+        return Optional.ofNullable(pod);
     }
 
     /**
@@ -281,7 +299,9 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
         } else if (cloud == null) {
             throw new IllegalStateException("No such cloud " + cloudName);
         } else {
-            throw new IllegalStateException(KubernetesSlave.class.getName() + " can be launched only by instances of " + KubernetesCloud.class.getName() + ". Cloud is " + cloud.getClass().getName());
+            throw new IllegalStateException(KubernetesSlave.class.getName() + " can be launched only by instances of "
+                    + KubernetesCloud.class.getName() + ". Cloud is "
+                    + cloud.getClass().getName());
         }
     }
 
@@ -289,7 +309,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
         String randString = RandomStringUtils.random(5, "bcdfghjklmnpqrstvwxz0123456789");
         String name = template.getName();
         if (StringUtils.isEmpty(name)) {
-            return String.format("%s-%s", DEFAULT_AGENT_PREFIX,  randString);
+            return String.format("%s-%s", DEFAULT_AGENT_PREFIX, randString);
         }
         // no spaces
         name = name.replaceAll("[ _]", "-").toLowerCase(Locale.getDefault());
@@ -316,13 +336,13 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
             // even though we default the pod template's retention
             // strategy, there are various legacy paths for injecting
             // pod templates where the
-            // value can still be null, so check for it here so 
+            // value can still be null, so check for it here so
             // as to not blow up termination path
-            //if (pr != null) {
-                retentionPolicy = pr;
-            //} else {
+            // if (pr != null) {
+            retentionPolicy = pr;
+            // } else {
             //    LOGGER.fine("Template pod retention policy was null");
-            //}
+            // }
         }
         return retentionPolicy;
     }
@@ -330,13 +350,19 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
     @Override
     protected void _terminate(TaskListener listener) throws IOException, InterruptedException {
         LOGGER.log(Level.INFO, "Terminating Kubernetes instance for agent {0}", name);
-        
+
         KubernetesCloud cloud;
         try {
             cloud = getKubernetesCloud();
         } catch (IllegalStateException e) {
-            e.printStackTrace(listener.fatalError("Unable to terminate agent. Cloud may have been removed. There may be leftover resources on the Kubernetes cluster."));
-            LOGGER.log(Level.SEVERE, String.format("Unable to terminate agent %s. Cloud may have been removed. There may be leftover resources on the Kubernetes cluster.", name));
+            e.printStackTrace(
+                    listener.fatalError(
+                            "Unable to terminate agent. Cloud may have been removed. There may be leftover resources on the Kubernetes cluster."));
+            LOGGER.log(
+                    Level.SEVERE,
+                    String.format(
+                            "Unable to terminate agent %s. Cloud may have been removed. There may be leftover resources on the Kubernetes cluster.",
+                            name));
             return;
         }
 
@@ -344,7 +370,9 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
         try {
             client = cloud.connect();
         } catch (KubernetesAuthException | IOException e) {
-            String msg = String.format("Failed to connect to cloud %s. There may be leftover resources on the Kubernetes cluster.", getCloudName());
+            String msg = String.format(
+                    "Failed to connect to cloud %s. There may be leftover resources on the Kubernetes cluster.",
+                    getCloudName());
             e.printStackTrace(listener.fatalError(msg));
             LOGGER.log(Level.SEVERE, msg);
             return;
@@ -353,8 +381,11 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
         // Prior to termination, determine if we should delete the slave pod based on
         // the slave pod's current state and the pod retention policy.
         // Healthy slave pods should still have a JNLP agent running at this point.
-        boolean deletePod = getPodRetention(cloud).shouldDeletePod(cloud, () -> client.pods().inNamespace(getNamespace()).withName(name).get());
-        
+        boolean deletePod = getPodRetention(cloud).shouldDeletePod(cloud, () -> client.pods()
+                .inNamespace(getNamespace())
+                .withName(name)
+                .get());
+
         Computer computer = toComputer();
         if (computer == null) {
             String msg = String.format("Computer for agent is null: %s", name);
@@ -370,7 +401,8 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
             try {
                 disconnectorFuture.get(DISCONNECTION_TIMEOUT, TimeUnit.SECONDS);
             } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                String msg = String.format("Ignoring error sending order to not reconnect agent %s: %s", name, e.getMessage());
+                String msg = String.format(
+                        "Ignoring error sending order to not reconnect agent %s: %s", name, e.getMessage());
                 LOGGER.log(Level.INFO, msg, e);
             }
         }
@@ -387,8 +419,9 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
             Metrics.metricRegistry().counter(MetricNames.PODS_TERMINATED).inc();
         } else {
             // Log warning, as the agent pod may still be running
-            LOGGER.log(Level.WARNING, "Agent pod {0} was not deleted due to retention policy {1}.",
-                    new Object[] { name, getPodRetention(cloud) });
+            LOGGER.log(Level.WARNING, "Agent pod {0} was not deleted due to retention policy {1}.", new Object[] {
+                name, getPodRetention(cloud)
+            });
         }
         String msg = String.format("Disconnected computer %s", name);
         LOGGER.log(Level.INFO, msg);
@@ -397,7 +430,12 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
 
     private void deleteSlavePod(TaskListener listener, KubernetesClient client) throws IOException {
         try {
-            boolean deleted = client.pods().inNamespace(getNamespace()).withName(name).delete().size() == 1;
+            boolean deleted = client.pods()
+                            .inNamespace(getNamespace())
+                            .withName(name)
+                            .delete()
+                            .size()
+                    == 1;
             if (!deleted) {
                 String msg = String.format("Failed to delete pod for agent %s/%s: not found", getNamespace(), name);
                 LOGGER.log(Level.WARNING, msg);
@@ -405,8 +443,8 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
                 return;
             }
         } catch (KubernetesClientException e) {
-            String msg = String.format("Failed to delete pod for agent %s/%s: %s", getNamespace(), name,
-                    e.getMessage());
+            String msg =
+                    String.format("Failed to delete pod for agent %s/%s: %s", getNamespace(), name, e.getMessage());
             LOGGER.log(Level.WARNING, msg, e);
             listener.error(msg);
             // TODO should perhaps retry later, in case API server is just overloaded currently
@@ -445,10 +483,10 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
             if (executor != null) {
                 Queue.Executable currentExecutable = executor.getCurrentExecutable();
                 if (currentExecutable != null && executables.add(currentExecutable)) {
-                    listener.getLogger().println(Messages.KubernetesSlave_AgentIsProvisionedFromTemplate(
-                            ModelHyperlinkNote.encodeTo("/computer/" + getNodeName(), getNodeName()),
-                            template.getName())
-                    );
+                    listener.getLogger()
+                            .println(Messages.KubernetesSlave_AgentIsProvisionedFromTemplate(
+                                    ModelHyperlinkNote.encodeTo("/computer/" + getNodeName(), getNodeName()),
+                                    template.getName()));
                     printAgentDescription(listener);
                     checkHomeAndWarnIfNeeded(listener);
                 }
@@ -472,7 +510,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
         Computer computer = toComputer();
         if (computer instanceof SlaveComputer) {
             SlaveComputer sc = (SlaveComputer) computer;
-            return x.replaceAll(sc.getJnlpMac(),"********");
+            return x.replaceAll(sc.getJnlpMac(), "********");
         }
         return x;
     }
@@ -486,7 +524,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
                     listener.getLogger().println(Messages.KubernetesSlave_HomeWarning());
                 }
             }
-        } catch (IOException|InterruptedException e) {
+        } catch (IOException | InterruptedException e) {
             e.printStackTrace(listener.error("[WARNING] Unable to retrieve HOME environment variable"));
         }
     }
@@ -512,6 +550,39 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
      */
     public static Builder builder() {
         return new Builder();
+    }
+
+    public void annotateTtl(TaskListener listener) {
+        try {
+            var kubernetesCloud = getKubernetesCloud();
+            Optional.ofNullable(kubernetesCloud.getGarbageCollection()).ifPresent(gc -> {
+                var ns = getNamespace();
+                var name = getPodName();
+                var l = Instant.now();
+                try {
+                    kubernetesCloud
+                            .connect()
+                            .pods()
+                            .inNamespace(ns)
+                            .withName(name)
+                            .patch("{\"metadata\":{\"annotations\":{\"" + GarbageCollection.ANNOTATION_LAST_REFRESH
+                                    + "\":\"" + l.toEpochMilli() + "\"}}}");
+                } catch (KubernetesAuthException e) {
+                    e.printStackTrace(listener.error("Failed to authenticate to Kubernetes cluster"));
+                } catch (IOException e) {
+                    e.printStackTrace(listener.error("Failed to connect to Kubernetes cluster"));
+                }
+                listener.getLogger().println("Annotated agent pod " + ns + "/" + name + " with TTL");
+                LOGGER.log(Level.FINE, () -> "Annotated agent pod " + ns + "/" + name + " with TTL");
+                try {
+                    save();
+                } catch (IOException e) {
+                    LOGGER.log(Level.WARNING, e, () -> "Failed to save");
+                }
+            });
+        } catch (RuntimeException e) {
+            e.printStackTrace(listener.error("Failed to annotate agent pod with TTL"));
+        }
     }
 
     /**
@@ -589,7 +660,8 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
             return this;
         }
 
-        private static RetentionStrategy determineRetentionStrategy(@NonNull KubernetesCloud cloud, @NonNull PodTemplate podTemplate) {
+        private static RetentionStrategy determineRetentionStrategy(
+                @NonNull KubernetesCloud cloud, @NonNull PodTemplate podTemplate) {
             if (podTemplate.getIdleMinutes() == 0) {
                 return new OnceRetentionStrategy(cloud.getRetentionTimeout());
             } else {
@@ -603,7 +675,9 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
          * @throws IOException
          * @throws Descriptor.FormException
          */
-        @SuppressFBWarnings(value = "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR", justification = "False positive. https://github.com/spotbugs/spotbugs/issues/567")
+        @SuppressFBWarnings(
+                value = "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR",
+                justification = "False positive. https://github.com/spotbugs/spotbugs/issues/567")
         public KubernetesSlave build() throws IOException, Descriptor.FormException {
             Validate.notNull(podTemplate);
             Validate.notNull(cloud);
@@ -613,7 +687,11 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
                     nodeDescription == null ? podTemplate.getName() : nodeDescription,
                     cloud.name,
                     label == null ? podTemplate.getLabel() : label,
-                    decorateLauncher(cloud, computerLauncher == null ? new KubernetesLauncher(cloud.getJenkinsTunnel(), null) : computerLauncher),
+                    decorateLauncher(
+                            cloud,
+                            computerLauncher == null
+                                    ? new KubernetesLauncher(cloud.getJenkinsTunnel(), null)
+                                    : computerLauncher),
                     retentionStrategy == null ? determineRetentionStrategy(cloud, podTemplate) : retentionStrategy);
         }
 
@@ -623,9 +701,7 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
             }
             return launcher;
         }
-
     }
-
 
     @Extension
     public static final class DescriptorImpl extends SlaveDescriptor {
@@ -639,14 +715,13 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
         public boolean isInstantiable() {
             return false;
         }
-
     }
 
     private static class SlaveDisconnector extends MasterToSlaveCallable<Void, IOException> {
 
         private static final long serialVersionUID = 8683427258340193283L;
 
-		private static final Logger LOGGER = Logger.getLogger(SlaveDisconnector.class.getName());
+        private static final Logger LOGGER = Logger.getLogger(SlaveDisconnector.class.getName());
 
         @Override
         public Void call() throws IOException {
@@ -660,6 +735,5 @@ public class KubernetesSlave extends AbstractCloudSlave implements TrackedItem {
             LOGGER.log(Level.INFO, "Disabled agent engine reconnects.");
             return null;
         }
-
     }
 }

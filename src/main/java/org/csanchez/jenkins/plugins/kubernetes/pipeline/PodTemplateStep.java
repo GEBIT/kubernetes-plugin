@@ -1,17 +1,22 @@
 package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 
+import edu.umd.cs.findbugs.annotations.CheckForNull;
+import hudson.Extension;
+import hudson.Util;
+import hudson.model.Node;
+import hudson.model.Run;
+import hudson.model.TaskListener;
+import hudson.slaves.Cloud;
+import hudson.util.ListBoxModel;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
-
-import edu.umd.cs.findbugs.annotations.CheckForNull;
-import hudson.slaves.Cloud;
-import hudson.util.ListBoxModel;
 import jenkins.model.Jenkins;
 import org.apache.commons.lang.StringUtils;
 import org.csanchez.jenkins.plugins.kubernetes.ContainerTemplate;
@@ -29,12 +34,6 @@ import org.jenkinsci.plugins.workflow.steps.StepDescriptor;
 import org.jenkinsci.plugins.workflow.steps.StepExecution;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
-
-import hudson.Extension;
-import hudson.Util;
-import hudson.model.Node;
-import hudson.model.Run;
-import hudson.model.TaskListener;
 import org.kohsuke.stapler.QueryParameter;
 
 public class PodTemplateStep extends Step implements Serializable {
@@ -62,8 +61,9 @@ public class PodTemplateStep extends Step implements Serializable {
 
     @CheckForNull
     private WorkspaceVolume workspaceVolume;
+
     private Boolean mountWorkspace;
-    
+
     private List<PodAnnotation> annotations = new ArrayList<>();
     private List<String> imagePullSecrets = new ArrayList<>();
 
@@ -89,13 +89,15 @@ public class PodTemplateStep extends Step implements Serializable {
     @CheckForNull
     private String yaml;
 
-    private YamlMergeStrategy yamlMergeStrategy = YamlMergeStrategy.defaultStrategy();
+    private YamlMergeStrategy yamlMergeStrategy;
+
+    @CheckForNull
+    private Boolean inheritYamlMergeStrategy;
 
     @CheckForNull
     private PodRetention podRetention;
 
     private Boolean showRawYaml;
-
 
     @CheckForNull
     private String runAsUser;
@@ -222,7 +224,10 @@ public class PodTemplateStep extends Step implements Serializable {
 
     @DataBoundSetter
     public void setWorkspaceVolume(@CheckForNull WorkspaceVolume workspaceVolume) {
-        this.workspaceVolume = (workspaceVolume == null || workspaceVolume.equals(DescriptorImpl.defaultWorkspaceVolume)) ? null : workspaceVolume;
+        this.workspaceVolume =
+                (workspaceVolume == null || workspaceVolume.equals(DescriptorImpl.defaultWorkspaceVolume))
+                        ? null
+                        : workspaceVolume;
     }
 
     public Integer getInstanceCap() {
@@ -277,7 +282,9 @@ public class PodTemplateStep extends Step implements Serializable {
     }
 
     @CheckForNull
-    public String getServiceAccount() { return serviceAccount; }
+    public String getServiceAccount() {
+        return serviceAccount;
+    }
 
     @DataBoundSetter
     public void setServiceAccount(@CheckForNull String serviceAccount) {
@@ -285,7 +292,9 @@ public class PodTemplateStep extends Step implements Serializable {
     }
 
     @CheckForNull
-    public String getSchedulerName() { return schedulerName; }
+    public String getSchedulerName() {
+        return schedulerName;
+    }
 
     @DataBoundSetter
     public void setSchedulerName(@CheckForNull String schedulerName) {
@@ -367,7 +376,17 @@ public class PodTemplateStep extends Step implements Serializable {
 
     @DataBoundSetter
     public void setPodRetention(@CheckForNull PodRetention podRetention) {
-        this.podRetention = (podRetention == null || podRetention.equals(DescriptorImpl.defaultPodRetention)) ? null : podRetention;
+        this.podRetention =
+                (podRetention == null || podRetention.equals(DescriptorImpl.defaultPodRetention)) ? null : podRetention;
+    }
+
+    public boolean isInheritYamlMergeStrategy() {
+        return Optional.ofNullable(inheritYamlMergeStrategy).orElse(false);
+    }
+
+    @DataBoundSetter
+    public void setInheritYamlMergeStrategy(boolean inheritYamlMergeStrategy) {
+        this.inheritYamlMergeStrategy = inheritYamlMergeStrategy;
     }
 
     boolean isShowRawYamlSet() {
@@ -383,7 +402,7 @@ public class PodTemplateStep extends Step implements Serializable {
         this.showRawYaml = Boolean.valueOf(showRawYaml);
     }
 
-    public String getRunAsUser(){
+    public String getRunAsUser() {
         return this.runAsUser;
     }
 
@@ -392,7 +411,7 @@ public class PodTemplateStep extends Step implements Serializable {
         this.runAsUser = runAsUser;
     }
 
-    public String getRunAsGroup(){
+    public String getRunAsGroup() {
         return this.runAsGroup;
     }
 
@@ -414,7 +433,26 @@ public class PodTemplateStep extends Step implements Serializable {
     @Extension
     public static class DescriptorImpl extends StepDescriptor {
 
-        static final String[] POD_TEMPLATE_FIELDS = {"name", "namespace", "inheritFrom", "containers", "envVars", "volumes", "annotations", "yaml", "showRawYaml", "instanceCap", "podRetention", "supplementalGroups", "idleMinutes", "activeDeadlineSeconds", "serviceAccount", "nodeSelector", "workingDir", "workspaceVolume"};
+        static final String[] POD_TEMPLATE_FIELDS = {
+            "name",
+            "namespace",
+            "inheritFrom",
+            "containers",
+            "envVars",
+            "volumes",
+            "annotations",
+            "yaml",
+            "showRawYaml",
+            "instanceCap",
+            "podRetention",
+            "supplementalGroups",
+            "idleMinutes",
+            "activeDeadlineSeconds",
+            "serviceAccount",
+            "nodeSelector",
+            "workingDir",
+            "workspaceVolume"
+        };
 
         public DescriptorImpl() {
             for (String field : POD_TEMPLATE_FIELDS) {
@@ -426,12 +464,10 @@ public class PodTemplateStep extends Step implements Serializable {
         public ListBoxModel doFillCloudItems() {
             ListBoxModel result = new ListBoxModel();
             result.add("—any—", "");
-            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) { // TODO track use of SYSTEM_READ and/or MANAGE in GlobalCloudConfiguration
+            if (!Jenkins.get().hasPermission(Jenkins.MANAGE)) {
                 return result;
             }
-            Jenkins.get().clouds
-                    .getAll(KubernetesCloud.class)
-                    .forEach(cloud -> result.add(cloud.name));
+            Jenkins.get().clouds.getAll(KubernetesCloud.class).forEach(cloud -> result.add(cloud.name));
             return result;
         }
 
@@ -441,7 +477,7 @@ public class PodTemplateStep extends Step implements Serializable {
             ListBoxModel result = new ListBoxModel();
             result.add("—Default inheritance—", "<default>");
             result.add("—Disable inheritance—", " ");
-            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) { // TODO track use of SYSTEM_READ and/or MANAGE in GlobalCloudConfiguration
+            if (!Jenkins.get().hasPermission(Jenkins.MANAGE)) {
                 return result;
             }
             Cloud cloud;

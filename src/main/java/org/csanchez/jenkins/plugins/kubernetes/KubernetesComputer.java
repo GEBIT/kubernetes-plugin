@@ -1,9 +1,12 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.model.Computer;
 import hudson.model.Executor;
 import hudson.model.Item;
 import hudson.model.Queue;
+import hudson.model.TaskListener;
 import hudson.security.ACL;
 import hudson.security.Permission;
 import hudson.slaves.AbstractCloudComputer;
@@ -13,9 +16,20 @@ import io.fabric8.kubernetes.api.model.EventList;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Serializable;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import jenkins.model.Jenkins;
 import jenkins.security.MasterToSlaveCallable;
-
 import org.acegisecurity.Authentication;
 import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.plugins.cloudstats.ProvisioningActivity.Id;
@@ -29,21 +43,6 @@ import org.kohsuke.stapler.export.Exported;
 import org.kohsuke.stapler.framework.io.ByteBuffer;
 import org.kohsuke.stapler.framework.io.LargeText;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.Serializable;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-import edu.umd.cs.findbugs.annotations.NonNull;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
 /**
  * @author Carlos Sanchez carlos@apache.org
  */
@@ -52,7 +51,7 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
 
     private boolean launching;
 
-    //VisibleForTesting
+    // VisibleForTesting
     static final String GEBIT_BUILD_CLUSTER_WORKSPACE_PATH = "GEBIT_BUILD_CLUSTER_WORKSPACE_PATH";
 
     // id for cloud-stats plugin
@@ -92,13 +91,13 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
 
     @Exported
     public List<Container> getContainers() throws KubernetesAuthException, IOException {
-        if(!Jenkins.get().hasPermission(Computer.EXTENDED_READ)) {
+        if (!Jenkins.get().hasPermission(Computer.EXTENDED_READ)) {
             LOGGER.log(Level.FINE, " Computer {0} getContainers, lack of admin permission, returning empty list", this);
             return Collections.emptyList();
         }
 
         KubernetesSlave slave = getNode();
-        if(slave == null) {
+        if (slave == null) {
             return Collections.emptyList();
         }
 
@@ -117,20 +116,20 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
 
     @Exported
     public List<Event> getPodEvents() throws KubernetesAuthException, IOException {
-        if(!Jenkins.get().hasPermission(Computer.EXTENDED_READ)) {
+        if (!Jenkins.get().hasPermission(Computer.EXTENDED_READ)) {
             LOGGER.log(Level.FINE, " Computer {0} getPodEvents, lack of admin permission, returning empty list", this);
             return Collections.emptyList();
         }
 
         KubernetesSlave slave = getNode();
-        if(slave != null) {
+        if (slave != null) {
             KubernetesCloud cloud = slave.getKubernetesCloud();
             KubernetesClient client = cloud.connect();
 
             String namespace = StringUtils.defaultIfBlank(slave.getNamespace(), client.getNamespace());
 
             Pod pod = client.pods().inNamespace(namespace).withName(getName()).get();
-            if(pod != null) {
+            if (pod != null) {
                 ObjectMeta podMeta = pod.getMetadata();
                 String podNamespace = podMeta.getNamespace();
 
@@ -139,8 +138,12 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
                 fields.put("involvedObject.name", podMeta.getName());
                 fields.put("involvedObject.namespace", podNamespace);
 
-                EventList eventList = client.v1().events().inNamespace(podNamespace).withFields(fields).list();
-                if(eventList != null) {
+                EventList eventList = client.v1()
+                        .events()
+                        .inNamespace(podNamespace)
+                        .withFields(fields)
+                        .list();
+                if (eventList != null) {
                     return eventList.getItems();
                 }
             }
@@ -149,20 +152,24 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
         return Collections.emptyList();
     }
 
-    public void doContainerLog(@QueryParameter String containerId,
-                               StaplerRequest req, StaplerResponse rsp) throws KubernetesAuthException, IOException {
+    public void doContainerLog(@QueryParameter String containerId, StaplerRequest req, StaplerResponse rsp)
+            throws KubernetesAuthException, IOException {
         Jenkins.get().checkPermission(Computer.EXTENDED_READ);
 
         ByteBuffer outputStream = new ByteBuffer();
         KubernetesSlave slave = getNode();
-        if(slave != null) {
+        if (slave != null) {
             KubernetesCloud cloud = slave.getKubernetesCloud();
             KubernetesClient client = cloud.connect();
 
             String namespace = StringUtils.defaultIfBlank(slave.getNamespace(), client.getNamespace());
 
-            client.pods().inNamespace(namespace).withName(getName())
-                    .inContainer(containerId).tailingLines(20).watchLog(outputStream);
+            client.pods()
+                    .inNamespace(namespace)
+                    .withName(getName())
+                    .inContainer(containerId)
+                    .tailingLines(20)
+                    .watchLog(outputStream);
         }
 
         new LargeText(outputStream, false).doProgressText(req, rsp);
@@ -180,6 +187,10 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
         return new KubernetesComputerACL(base);
     }
 
+    public void annotateTtl(TaskListener listener) {
+        Optional.ofNullable(getNode()).ifPresent(ks -> ks.annotateTtl(listener));
+    }
+
     /**
      * Simple static inner class to be used by {@link #getACL()}.
      * It replaces an anonymous inner class in order to fix
@@ -195,9 +206,8 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
 
         @Override
         public boolean hasPermission(Authentication a, Permission permission) {
-            return permission == Computer.CONFIGURE ? false : base.hasPermission(a,permission);
+            return permission == Computer.CONFIGURE ? false : base.hasPermission(a, permission);
         }
-
     }
 
     public void setLaunching(boolean launching) {
@@ -240,35 +250,42 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
         return task.getClass().getSimpleName().equals("MatrixConfiguration");
     }
 
-    @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "checked using string comparison of class name to avoid compile time dependency")
+    @SuppressFBWarnings(
+            value = "BC_UNCONFIRMED_CAST",
+            justification = "checked using string comparison of class name to avoid compile time dependency")
     public String calcWorkspacePath(Queue.Task task) {
         String workspacePath = null;
-        if (isMavenModuleSet(task)){
+        if (isMavenModuleSet(task)) {
             workspacePath = ((Item) task).getFullName();
         } else if (isMatrixJob(task)) {
             workspacePath = ((Item) task).getFullName().replace("=", "/");
-        // we never rsync automatically if it's a pipeline job (has to be done explicitly by
-        // the pipeline author)
-        //} else if (isPipelineJob(task)) {
-        //    workspacePath = ((Item) task.getOwnerTask()).getFullName();
+            // we never rsync automatically if it's a pipeline job (has to be done explicitly by
+            // the pipeline author)
+            // } else if (isPipelineJob(task)) {
+            //    workspacePath = ((Item) task.getOwnerTask()).getFullName();
         } else {
-            LOGGER.log(Level.SEVERE, "unable to calculate workspacePath for task: {0}", new Object[]{task});
+            LOGGER.log(Level.SEVERE, "unable to calculate workspacePath for task: {0}", new Object[] {task});
             throw new IllegalStateException("unable to calculate workspacePath for task: " + task);
         }
 
-        LOGGER.log(Level.INFO, "Calculated workspacePath: {0} for task: {1}", new Object[]{workspacePath, task});
+        LOGGER.log(Level.INFO, "Calculated workspacePath: {0} for task: {1}", new Object[] {workspacePath, task});
         return workspacePath;
     }
 
     private void runRsync(Queue.Task task, Rsync.Direction direction) {
         if (!isPipelineJob(task)) {
             try {
-                LOGGER.log(Level.INFO, "running rsync in direction {0} for Computer {1} and task {2}", new Object[] {direction, getName(), task});
+                LOGGER.log(Level.INFO, "running rsync in direction {0} for Computer {1} and task {2}", new Object[] {
+                    direction, getName(), task
+                });
                 RsyncResult rsyncResult = getChannel().call(new Rsync(calcWorkspacePath(task), direction));
-                LOGGER.log(Level.INFO, "rsync finished with exit code {0} for direction {1} for Computer {2} and task {3}\noutput:\n{4}",
+                LOGGER.log(
+                        Level.INFO,
+                        "rsync finished with exit code {0} for direction {1} for Computer {2} and task {3}\noutput:\n{4}",
                         new Object[] {rsyncResult.exitCode, direction, getName(), task, rsyncResult.output});
                 if (rsyncResult.exitCode != 0) {
-                    throw new IOException("rsync returned non-zero exit code: " + rsyncResult.exitCode + "\noutput:\n" + rsyncResult.output);
+                    throw new IOException("rsync returned non-zero exit code: " + rsyncResult.exitCode + "\noutput:\n"
+                            + rsyncResult.output);
                 }
             } catch (IOException | RuntimeException | InterruptedException e) {
                 LOGGER.log(Level.SEVERE, "Exception in runRsync: {0}", e);
@@ -289,11 +306,14 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> i
         }
     }
 
-    static class Rsync extends MasterToSlaveCallable<RsyncResult,IOException> {
+    static class Rsync extends MasterToSlaveCallable<RsyncResult, IOException> {
 
         private static final long serialVersionUID = 1L;
 
-        static enum Direction { PULL, PUSH };
+        static enum Direction {
+            PULL,
+            PUSH
+        };
 
         protected String workspacePath;
         protected String rsyncCmd;

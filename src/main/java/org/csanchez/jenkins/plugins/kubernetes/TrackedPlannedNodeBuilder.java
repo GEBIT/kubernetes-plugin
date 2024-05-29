@@ -3,10 +3,8 @@ package org.csanchez.jenkins.plugins.kubernetes;
 import com.google.common.util.concurrent.Futures;
 import hudson.model.Descriptor;
 import hudson.slaves.NodeProvisioner;
-
 import java.io.IOException;
 import java.util.concurrent.Future;
-
 import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
 import org.jenkinsci.plugins.cloudstats.TrackedPlannedNode;
 
@@ -22,8 +20,7 @@ public class TrackedPlannedNodeBuilder extends PlannedNodeBuilder {
         String nodeName = null;
         KubernetesSlave agent = null;
         try {
-            agent = KubernetesSlave
-                    .builder()
+            agent = KubernetesSlave.builder()
                     .podTemplate(cloud.getUnwrappedTemplate(t))
                     .cloud(cloud)
                     .build();

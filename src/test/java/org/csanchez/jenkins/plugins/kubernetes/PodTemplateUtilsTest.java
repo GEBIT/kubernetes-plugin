@@ -24,30 +24,29 @@
 
 package org.csanchez.jenkins.plugins.kubernetes;
 
-import static java.util.Arrays.*;
-import static java.util.Collections.*;
-import static org.csanchez.jenkins.plugins.kubernetes.PodTemplateUtils.*;
+import static java.util.Arrays.asList;
+import static java.util.Collections.singletonList;
+import static org.csanchez.jenkins.plugins.kubernetes.PodTemplateUtils.combine;
+import static org.csanchez.jenkins.plugins.kubernetes.PodTemplateUtils.parseFromYaml;
+import static org.csanchez.jenkins.plugins.kubernetes.PodTemplateUtils.sanitizeLabel;
+import static org.csanchez.jenkins.plugins.kubernetes.PodTemplateUtils.substitute;
+import static org.csanchez.jenkins.plugins.kubernetes.PodTemplateUtils.unwrap;
+import static org.csanchez.jenkins.plugins.kubernetes.PodTemplateUtils.validateLabel;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
-
-import org.csanchez.jenkins.plugins.kubernetes.model.KeyValueEnvVar;
-import org.csanchez.jenkins.plugins.kubernetes.model.SecretEnvVar;
-import org.csanchez.jenkins.plugins.kubernetes.volumes.HostPathVolume;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.experimental.theories.Theories;
-import org.junit.experimental.theories.Theory;
-import org.junit.runner.RunWith;
-import org.jvnet.hudson.test.Issue;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasEntry;
+import static org.hamcrest.Matchers.hasItems;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import hudson.model.Node;
 import hudson.tools.ToolLocationNodeProperty;
@@ -59,7 +58,6 @@ import io.fabric8.kubernetes.api.model.EnvFromSource;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodBuilder;
-import io.fabric8.kubernetes.api.model.PodFluent.SpecNested;
 import io.fabric8.kubernetes.api.model.PodSpec;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceRequirementsBuilder;
@@ -67,6 +65,25 @@ import io.fabric8.kubernetes.api.model.SecretEnvSource;
 import io.fabric8.kubernetes.api.model.Toleration;
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import io.fabric8.kubernetes.api.model.VolumeMountBuilder;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+import org.apache.commons.io.IOUtils;
+import org.csanchez.jenkins.plugins.kubernetes.model.KeyValueEnvVar;
+import org.csanchez.jenkins.plugins.kubernetes.model.SecretEnvVar;
+import org.csanchez.jenkins.plugins.kubernetes.volumes.HostPathVolume;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.experimental.theories.Theories;
+import org.junit.experimental.theories.Theory;
+import org.junit.runner.RunWith;
+import org.jvnet.hudson.test.Issue;
 import org.jvnet.hudson.test.JenkinsRule;
 
 @RunWith(Theories.class)
@@ -200,16 +217,28 @@ public class PodTemplateUtilsTest {
         Map<String, String> labelsMap1 = new HashMap<>();
         labelsMap1.put("label1", "pod1");
         labelsMap1.put("label2", "pod1");
-        Pod pod1 = new PodBuilder().withNewMetadata().withLabels( //
-                Collections.unmodifiableMap(labelsMap1) //
-        ).endMetadata().withNewSpec().endSpec().build();
+        Pod pod1 = new PodBuilder()
+                .withNewMetadata()
+                .withLabels( //
+                        Collections.unmodifiableMap(labelsMap1) //
+                        )
+                .endMetadata()
+                .withNewSpec()
+                .endSpec()
+                .build();
 
         Map<String, String> labelsMap2 = new HashMap<>();
         labelsMap2.put("label1", "pod2");
         labelsMap2.put("label3", "pod2");
-        Pod pod2 = new PodBuilder().withNewMetadata().withLabels( //
-                Collections.unmodifiableMap(labelsMap2) //
-        ).endMetadata().withNewSpec().endSpec().build();
+        Pod pod2 = new PodBuilder()
+                .withNewMetadata()
+                .withLabels( //
+                        Collections.unmodifiableMap(labelsMap2) //
+                        )
+                .endMetadata()
+                .withNewSpec()
+                .endSpec()
+                .build();
 
         Map<String, String> labels = combine(pod1, pod2).getMetadata().getLabels();
         assertThat(labels, hasEntry("label1", "pod2"));
@@ -312,8 +341,10 @@ public class PodTemplateUtilsTest {
         assertEquals("key:value", result.getNodeSelector());
         assertEquals(2, result.getContainers().size());
 
-        ContainerTemplate mavenTemplate = result.getContainers().stream().filter(c -> c.getName().equals("maven"))
-                .findFirst().orElse(null);
+        ContainerTemplate mavenTemplate = result.getContainers().stream()
+                .filter(c -> c.getName().equals("maven"))
+                .findFirst()
+                .orElse(null);
         assertNotNull(mavenTemplate);
         assertEquals("maven:2", mavenTemplate.getImage());
     }
@@ -321,15 +352,19 @@ public class PodTemplateUtilsTest {
     @Test
     public void shouldCombineInitContainers() {
         Pod parentPod = new PodBuilder()
-                .withNewMetadata().endMetadata()
+                .withNewMetadata()
+                .endMetadata()
                 .withNewSpec()
-                    .withInitContainers(new ContainerBuilder().withName("init-parent").build())
+                .withInitContainers(
+                        new ContainerBuilder().withName("init-parent").build())
                 .endSpec()
                 .build();
         Pod childPod = new PodBuilder()
-                .withNewMetadata().endMetadata()
+                .withNewMetadata()
+                .endMetadata()
                 .withNewSpec()
-                .withInitContainers(new ContainerBuilder().withName("init-child").build())
+                .withInitContainers(
+                        new ContainerBuilder().withName("init-child").build())
                 .endSpec()
                 .build();
 
@@ -343,15 +378,23 @@ public class PodTemplateUtilsTest {
     @Test
     public void childShouldOverrideParentInitContainer() {
         Pod parentPod = new PodBuilder()
-                .withNewMetadata().endMetadata()
+                .withNewMetadata()
+                .endMetadata()
                 .withNewSpec()
-                .withInitContainers(new ContainerBuilder().withName("init").withImage("image-parent").build())
+                .withInitContainers(new ContainerBuilder()
+                        .withName("init")
+                        .withImage("image-parent")
+                        .build())
                 .endSpec()
                 .build();
         Pod childPod = new PodBuilder()
-                .withNewMetadata().endMetadata()
+                .withNewMetadata()
+                .endMetadata()
                 .withNewSpec()
-                .withInitContainers(new ContainerBuilder().withName("init").withImage("image-child").build())
+                .withInitContainers(new ContainerBuilder()
+                        .withName("init")
+                        .withImage("image-child")
+                        .build())
                 .endSpec()
                 .build();
 
@@ -468,8 +511,8 @@ public class PodTemplateUtilsTest {
 
         ContainerTemplate result = combine(template1, template2);
 
-        assertThat(result.getEnvVars(),
-                contains(containerSecretEnvVar1, containerSecretEnvVar2, containerSecretEnvVar3));
+        assertThat(
+                result.getEnvVars(), contains(containerSecretEnvVar1, containerSecretEnvVar2, containerSecretEnvVar3));
     }
 
     @Test
@@ -538,7 +581,9 @@ public class PodTemplateUtilsTest {
         template2.setVolumes(asList(hostPathVolume3, hostPathVolume4));
 
         PodTemplate result = combine(template1, template2);
-        assertThat(result.getVolumes(), containsInAnyOrder(hostPathVolume1, hostPathVolume2, hostPathVolume3, hostPathVolume4));
+        assertThat(
+                result.getVolumes(),
+                containsInAnyOrder(hostPathVolume1, hostPathVolume2, hostPathVolume3, hostPathVolume4));
     }
 
     private ContainerBuilder containerBuilder() {
@@ -548,25 +593,55 @@ public class PodTemplateUtilsTest {
         Map<String, Quantity> requestMap = new HashMap<>();
         limitMap.put("cpu", new Quantity());
         limitMap.put("memory", new Quantity());
-        return new ContainerBuilder().withNewSecurityContext().endSecurityContext().withNewResources()
+        return new ContainerBuilder()
+                .withNewSecurityContext()
+                .endSecurityContext()
+                .withNewResources()
                 .withLimits(Collections.unmodifiableMap(limitMap))
-                .withRequests(Collections.unmodifiableMap(requestMap)).endResources();
+                .withRequests(Collections.unmodifiableMap(requestMap))
+                .endResources();
     }
 
     @Test
     public void shouldCombineAllPodMounts() {
-        VolumeMount vm1 = new VolumeMountBuilder().withMountPath("/host/mnt1").withName("volume-1").withReadOnly(false)
+        VolumeMount vm1 = new VolumeMountBuilder()
+                .withMountPath("/host/mnt1")
+                .withName("volume-1")
+                .withReadOnly(false)
                 .build();
-        VolumeMount vm2 = new VolumeMountBuilder().withMountPath("/host/mnt2").withName("volume-2").withReadOnly(false)
+        VolumeMount vm2 = new VolumeMountBuilder()
+                .withMountPath("/host/mnt2")
+                .withName("volume-2")
+                .withReadOnly(false)
                 .build();
-        VolumeMount vm3 = new VolumeMountBuilder().withMountPath("/host/mnt3").withName("volume-3").withReadOnly(false)
+        VolumeMount vm3 = new VolumeMountBuilder()
+                .withMountPath("/host/mnt3")
+                .withName("volume-3")
+                .withReadOnly(false)
                 .build();
-        VolumeMount vm4 = new VolumeMountBuilder().withMountPath("/host/mnt1").withName("volume-4").withReadOnly(false)
+        VolumeMount vm4 = new VolumeMountBuilder()
+                .withMountPath("/host/mnt1")
+                .withName("volume-4")
+                .withReadOnly(false)
                 .build();
-        Container container1 = containerBuilder().withName("jnlp").withVolumeMounts(vm1, vm2).build();
-        Pod pod1 = new PodBuilder().withNewMetadata().endMetadata().withNewSpec().withContainers(container1).endSpec().build();
-        Container container2 = containerBuilder().withName("jnlp").withVolumeMounts(vm3, vm4).build();
-        Pod pod2 = new PodBuilder().withNewMetadata().endMetadata().withNewSpec().withContainers(container2).endSpec().build();
+        Container container1 =
+                containerBuilder().withName("jnlp").withVolumeMounts(vm1, vm2).build();
+        Pod pod1 = new PodBuilder()
+                .withNewMetadata()
+                .endMetadata()
+                .withNewSpec()
+                .withContainers(container1)
+                .endSpec()
+                .build();
+        Container container2 =
+                containerBuilder().withName("jnlp").withVolumeMounts(vm3, vm4).build();
+        Pod pod2 = new PodBuilder()
+                .withNewMetadata()
+                .endMetadata()
+                .withNewSpec()
+                .withContainers(container2)
+                .endSpec()
+                .build();
 
         Pod result = combine(pod1, pod2);
         List<Container> containers = result.getSpec().getContainers();
@@ -594,7 +669,9 @@ public class PodTemplateUtilsTest {
         pod2.setMetadata(new ObjectMeta());
 
         Pod result = combine(pod1, pod2);
-        assertThat(result.getSpec().getTolerations(), containsInAnyOrder(toleration1, toleration2, toleration3, toleration4));
+        assertThat(
+                result.getSpec().getTolerations(),
+                containsInAnyOrder(toleration1, toleration2, toleration3, toleration4));
     }
 
     @Test
@@ -631,27 +708,27 @@ public class PodTemplateUtilsTest {
 
         port2.setName("port-1");
         assertThat(combine(container1, container2).getPorts(), contains(port2));
-
     }
 
-    
     @Test
     public void shouldCombineAllResources() {
         Container container1 = new Container();
-        container1.setResources(new ResourceRequirementsBuilder() //
-                .addToLimits("cpu", new Quantity("1")) //
-                .addToLimits("memory", new Quantity("1Gi")) //
-                .addToRequests("cpu", new Quantity("100m")) //
-                .addToRequests("memory", new Quantity("156Mi")) //
-                .build());
+        container1.setResources(
+                new ResourceRequirementsBuilder() //
+                        .addToLimits("cpu", new Quantity("1")) //
+                        .addToLimits("memory", new Quantity("1Gi")) //
+                        .addToRequests("cpu", new Quantity("100m")) //
+                        .addToRequests("memory", new Quantity("156Mi")) //
+                        .build());
 
         Container container2 = new Container();
-        container2.setResources(new ResourceRequirementsBuilder() //
-                .addToLimits("cpu", new Quantity("2")) //
-                .addToLimits("memory", new Quantity("2Gi")) //
-                .addToRequests("cpu", new Quantity("200m")) //
-                .addToRequests("memory", new Quantity("256Mi")) //
-                .build());
+        container2.setResources(
+                new ResourceRequirementsBuilder() //
+                        .addToLimits("cpu", new Quantity("2")) //
+                        .addToLimits("memory", new Quantity("2Gi")) //
+                        .addToRequests("cpu", new Quantity("200m")) //
+                        .addToRequests("memory", new Quantity("256Mi")) //
+                        .build());
 
         Container result = combine(container1, container2);
 
@@ -665,15 +742,31 @@ public class PodTemplateUtilsTest {
     public void shouldCombineContainersInOrder() {
         Container container1 = containerBuilder().withName("mysql").build();
         Container container2 = containerBuilder().withName("jnlp").build();
-        Pod pod1 = new PodBuilder().withNewMetadata().endMetadata().withNewSpec().withContainers(container1, container2).endSpec().build();
-        
+        Pod pod1 = new PodBuilder()
+                .withNewMetadata()
+                .endMetadata()
+                .withNewSpec()
+                .withContainers(container1, container2)
+                .endSpec()
+                .build();
+
         Container container3 = containerBuilder().withName("alpine").build();
         Container container4 = containerBuilder().withName("node").build();
         Container container5 = containerBuilder().withName("mvn").build();
-        Pod pod2 = new PodBuilder().withNewMetadata().endMetadata().withNewSpec().withContainers(container3, container4, container5).endSpec().build();
-        
+        Pod pod2 = new PodBuilder()
+                .withNewMetadata()
+                .endMetadata()
+                .withNewSpec()
+                .withContainers(container3, container4, container5)
+                .endSpec()
+                .build();
+
         Pod result = combine(pod1, pod2);
-        assertEquals(Arrays.asList("mysql", "jnlp", "alpine", "node", "mvn"), result.getSpec().getContainers().stream().map(Container::getName).collect(Collectors.toList()));
+        assertEquals(
+                Arrays.asList("mysql", "jnlp", "alpine", "node", "mvn"),
+                result.getSpec().getContainers().stream()
+                        .map(Container::getName)
+                        .collect(Collectors.toList()));
     }
 
     /**
@@ -738,8 +831,8 @@ public class PodTemplateUtilsTest {
         Map<String, String> properties = new HashMap<>();
         properties.put("key1", "value1");
         properties.put("key2", "value2");
-        assertEquals("value1 or value2 or ${key3}",
-                substitute("${key1} or ${key2} or ${key3}", properties, "defaultValue"));
+        assertEquals(
+                "value1 or value2 or ${key3}", substitute("${key1} or ${key2} or ${key3}", properties, "defaultValue"));
     }
 
     @Test
@@ -804,22 +897,23 @@ public class PodTemplateUtilsTest {
 
         PodTemplate podTemplate1 = new PodTemplate();
         List<ToolLocationNodeProperty> nodeProperties1 = new ArrayList<>();
-        ToolLocationNodeProperty toolHome1 = new ToolLocationNodeProperty(new ToolLocationNodeProperty.ToolLocation("toolKey1@Test", "toolHome1"));
+        ToolLocationNodeProperty toolHome1 =
+                new ToolLocationNodeProperty(new ToolLocationNodeProperty.ToolLocation("toolKey1@Test", "toolHome1"));
         nodeProperties1.add(toolHome1);
         podTemplate1.setNodeProperties(nodeProperties1);
 
         PodTemplate podTemplate2 = new PodTemplate();
         List<ToolLocationNodeProperty> nodeProperties2 = new ArrayList<>();
-        ToolLocationNodeProperty toolHome2 = new ToolLocationNodeProperty(new ToolLocationNodeProperty.ToolLocation("toolKey2@Test", "toolHome2"));
+        ToolLocationNodeProperty toolHome2 =
+                new ToolLocationNodeProperty(new ToolLocationNodeProperty.ToolLocation("toolKey2@Test", "toolHome2"));
         nodeProperties2.add(toolHome2);
         podTemplate2.setNodeProperties(nodeProperties2);
 
-        PodTemplate result = combine(podTemplate1,podTemplate2);
+        PodTemplate result = combine(podTemplate1, podTemplate2);
 
         assertThat(podTemplate1.getNodeProperties(), contains(toolHome1));
         assertThat(podTemplate2.getNodeProperties(), contains(toolHome2));
         assertThat(result.getNodeProperties(), contains(toolHome1, toolHome2));
-
     }
 
     @Test
@@ -829,32 +923,82 @@ public class PodTemplateUtilsTest {
         PodTemplateUtils.parseFromYaml(null);
         PodTemplateUtils.parseFromYaml("");
     }
-    
-    @Test
-    public void shouldFailWhenInheritFromTemplateNotExists() {
-    	PodTemplate parent = new PodTemplate();
-        parent.setName("parent");
-        parent.setLabel("parent");
-        parent.setServiceAccount("sa");
-        parent.setNodeSelector("key:value");
-        parent.setImagePullSecrets(asList(SECRET_1));
-        parent.setYaml("Yaml");
 
-        PodTemplate template1 = new PodTemplate();
-        template1.setName("template1");
-        template1.setInheritFrom("parent");
-        template1.setServiceAccount("sa1");
-        template1.setImagePullSecrets(asList(SECRET_2, SECRET_3));
-        template1.setYaml("Yaml2");
-        
-        // test the old functionality at first
-        PodTemplate result = unwrap(template1, asList(parent, template1));
-        assertEquals(template1.getServiceAccount(), result.getServiceAccount());
-        
-        // test the new error case
-        template1.setInheritFrom("notExistingParent");
-		assertThrows(IllegalArgumentException.class, () -> {
-			unwrap(template1, asList(parent, template1));
-		});
+    @Test
+    public void octalParsing() throws IOException {
+        var fileStream = getClass().getResourceAsStream(getClass().getSimpleName() + "/octal.yaml");
+        assertNotNull(fileStream);
+        var pod = parseFromYaml(IOUtils.toString(fileStream, StandardCharsets.UTF_8));
+        checkParsed(pod);
+    }
+
+    @Test
+    public void decimalParsing() throws IOException {
+        var fileStream = getClass().getResourceAsStream(getClass().getSimpleName() + "/decimal.yaml");
+        assertNotNull(fileStream);
+        var pod = parseFromYaml(IOUtils.toString(fileStream, StandardCharsets.UTF_8));
+        checkParsed(pod);
+    }
+
+    private static void checkParsed(Pod pod) {
+        assertEquals(
+                Integer.valueOf("755", 8),
+                pod.getSpec().getVolumes().get(0).getConfigMap().getDefaultMode());
+        assertEquals(
+                Integer.valueOf("744", 8),
+                pod.getSpec().getVolumes().get(1).getSecret().getDefaultMode());
+        var projectedVolume = pod.getSpec().getVolumes().get(2).getProjected();
+        assertEquals(Integer.valueOf("644", 8), projectedVolume.getDefaultMode());
+        assertEquals(
+                Integer.valueOf("400", 8),
+                projectedVolume
+                        .getSources()
+                        .get(0)
+                        .getConfigMap()
+                        .getItems()
+                        .get(0)
+                        .getMode());
+        assertEquals(
+                Integer.valueOf("600", 8),
+                projectedVolume
+                        .getSources()
+                        .get(1)
+                        .getSecret()
+                        .getItems()
+                        .get(0)
+                        .getMode());
+    }
+
+    @Test
+    @Issue("JENKINS-72886")
+    public void shouldIgnoreContainerEmptyArgs() {
+        Container parent = new Container();
+        parent.setArgs(List.of("arg1", "arg2"));
+        parent.setCommand(List.of("parent command"));
+        Container child = new Container();
+        Container result = combine(parent, child);
+        assertEquals(List.of("arg1", "arg2"), result.getArgs());
+        assertEquals(List.of("parent command"), result.getCommand());
+    }
+
+    @Test
+    public void shouldSanitizeJenkinsLabel() {
+        assertEquals("foo", sanitizeLabel("foo"));
+        assertEquals("foo_bar__3", sanitizeLabel("foo bar #3"));
+        assertEquals("This_Thing", sanitizeLabel("This/Thing"));
+        assertEquals("xwhatever", sanitizeLabel("/whatever"));
+        assertEquals(
+                "xprolix-for-the-sixty-three-character-limit-in-kubernetes",
+                sanitizeLabel("way-way-way-too-prolix-for-the-sixty-three-character-limit-in-kubernetes"));
+        assertEquals("label1", sanitizeLabel("label1"));
+        assertEquals("label1_label2", sanitizeLabel("label1 label2"));
+        assertEquals(
+                "bel2_verylooooooooooooooooooooooooooooonglabelover63chars",
+                sanitizeLabel("label1 label2 verylooooooooooooooooooooooooooooonglabelover63chars"));
+        assertEquals("xfoo_bar", sanitizeLabel(":foo:bar"));
+        assertEquals("xfoo_barx", sanitizeLabel(":foo:bar:"));
+        assertEquals(
+                "ylooooooooooooooooooooooooooooonglabelendinginunderscorex",
+                sanitizeLabel("label1 label2 verylooooooooooooooooooooooooooooonglabelendinginunderscore_"));
     }
 }

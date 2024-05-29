@@ -1,13 +1,12 @@
 package org.csanchez.jenkins.plugins.kubernetes;
 
-import hudson.util.XStream2;
-import org.junit.Test;
-
-import static org.csanchez.jenkins.plugins.kubernetes.PodTemplate.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.empty;
 import static org.junit.Assert.assertEquals;
+
+import hudson.util.XStream2;
+import org.junit.Test;
 
 public class PodTemplateTest {
     @Test
@@ -32,15 +31,4 @@ public class PodTemplateTest {
         pt.setIdleMinutes(99);
         assertEquals(xs.toXML(pt), xs.toXML(new PodTemplate(pt)));
     }
-
-    @Test
-    public void sanitizeLabels() {
-        assertEquals("label1", sanitizeLabel("label1"));
-        assertEquals("label1_label2", sanitizeLabel("label1 label2"));
-        assertEquals("el1_label2_verylooooooooooooooooooooooooooooonglabelover63chars", sanitizeLabel("label1 label2 verylooooooooooooooooooooooooooooonglabelover63chars"));
-        assertEquals("xfoo_bar", sanitizeLabel(":foo:bar"));
-        assertEquals("xfoo_barx", sanitizeLabel(":foo:bar:"));
-        assertEquals("l2_verylooooooooooooooooooooooooooooonglabelendinginunderscorex", sanitizeLabel("label1 label2 verylooooooooooooooooooooooooooooonglabelendinginunderscore_"));
-    }
-
 }
