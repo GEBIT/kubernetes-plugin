@@ -4,10 +4,6 @@
   <parent>
     <groupId>org.jenkins-ci.plugins</groupId>
     <artifactId>plugin</artifactId>
-    <!-- downgraded from 4.70 because of https://jira.gebit.de/browse/DINF-729 -->
-    <!-- 
-    <version>4.54</version>
-     -->
     <version>4.82</version>
     <relativePath />
   </parent>
@@ -63,7 +59,7 @@
     <!-- GEBIT: versions to be used for gebit-build support -->
     <version.tiles>2.8-gebit37</version.tiles>
     <version.gebit-build-extension>1.2.2</version.gebit-build-extension>
-    <version.gebit-forked>1.0.3-SNAPSHOT</version.gebit-forked>
+    <version.gebit-forked>1.0.2</version.gebit-forked>
     <version.maven-enforcer-plugin>3.2.1</version.maven-enforcer-plugin>
     <!-- disable (gebit) enforcer until we have updated it in gebit-build-parent -->
     <enforce.skip>true</enforce.skip>
