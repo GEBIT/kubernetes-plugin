@@ -245,7 +245,8 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
     private PodRetention podRetention;
 
     public PodTemplate() {
-        this((String) null, new MountWorkspaceBlock(WorkspaceVolume.getDefault()));
+        this((String) null);
+        setMountWorkspace(true);
     }
 
     @DataBoundConstructor
@@ -255,13 +256,7 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
         } else {
             this.id = id;
         }
-        setMountWorkspace(true);
         recomputeLabelDerivedFields();
-    }
-
-    public PodTemplate(@CheckForNull String id, MountWorkspaceBlock mountWorkspace) {
-        this(id);
-        setMountWorkspace(mountWorkspace);
     }
 
     @SuppressFBWarnings(
@@ -274,7 +269,6 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
         xs.unmarshal(XStream2.getDefaultDriver().createReader(new StringReader(xs.toXML(from))), this);
         this.yamls = from.yamls;
         this.listener = from.listener;
-        setMountWorkspace(true);
         recomputeLabelDerivedFields();
     }
 
@@ -840,7 +834,6 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
                 this.mountWorkspace = new MountWorkspaceBlock(this.workspaceVolume);
             } else {
                 this.mountWorkspace = new MountWorkspaceBlock(WorkspaceVolume.getDefault());
-                this.workspaceVolume = WorkspaceVolume.getDefault();
             }
         } else {
             this.mountWorkspace = null;
@@ -851,7 +844,7 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
     public void setMountWorkspace(MountWorkspaceBlock mountWorkspaceBlock) {
         if (mountWorkspaceBlock != null) {
             this.mountWorkspace = mountWorkspaceBlock;
-            this.workspaceVolume = mountWorkspaceBlock.workspaceVolume;
+            setWorkspaceVolume(mountWorkspaceBlock.workspaceVolume);
         } else {
             this.mountWorkspace = null;
         }

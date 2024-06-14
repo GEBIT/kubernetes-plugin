@@ -538,7 +538,10 @@ public class PodTemplateBuilder {
                 .map(entry -> entry.toPort())
                 .toArray(size -> new ContainerPort[size]);
 
-        List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, workingDir);
+        // remove this, it only adds a default workspace volume (despite the name)
+        // adding a default workspace volume is done at the end of build() with stream processing
+        // List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, workingDir);
+        List<VolumeMount> containerMounts = new ArrayList<>(volumeMounts);
 
         ContainerLivenessProbe clp = containerTemplate.getLivenessProbe();
         Probe livenessProbe = null;
@@ -587,27 +590,6 @@ public class PodTemplateBuilder {
                         containerTemplate.getResourceLimitEphemeralStorage()))
                 .endResources()
                 .build();
-    }
-
-    private VolumeMount getDefaultVolumeMount(@CheckForNull String workingDir) {
-        String wd = workingDir;
-        if (wd == null) {
-            wd = ContainerTemplate.DEFAULT_WORKING_DIR;
-            LOGGER.log(Level.FINE, "Container workingDir is null, defaulting to {0}", wd);
-        }
-        return new VolumeMountBuilder()
-                .withMountPath(wd)
-                .withName(WORKSPACE_VOLUME_NAME)
-                .withReadOnly(false)
-                .build();
-    }
-
-    private List<VolumeMount> getContainerVolumeMounts(Collection<VolumeMount> volumeMounts, String workingDir) {
-        List<VolumeMount> containerMounts = new ArrayList<>(volumeMounts);
-        if (!isNullOrEmpty(workingDir) && !PodVolume.volumeMountExists(workingDir, volumeMounts)) {
-            containerMounts.add(getDefaultVolumeMount(workingDir));
-        }
-        return containerMounts;
     }
 
     /**
