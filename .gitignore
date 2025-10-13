@@ -11,3 +11,8 @@ nb-configuration.xml
 *.bak
 /.vscode/
 **/.DS_Store
+.java-version
+.sdkmanrc
+/eclipse-target/
+# for jenkins only
+.repository/

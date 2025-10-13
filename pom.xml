@@ -51,6 +51,13 @@
     <spotbugs.effort>Max</spotbugs.effort>
     <spotbugs.threshold>Low</spotbugs.threshold>
     <spotless.check.skip>false</spotless.check.skip>
+
+    <!-- GEBIT: versions to be used for gebit-build support -->
+    <version.tiles>2.8-gebit40</version.tiles>
+    <version.gebit-build-extension>2.0.0</version.gebit-build-extension>
+    <version.build>3.12.2</version.build>
+    <version.gebit-forked>1.0.6</version.gebit-forked>
+    <!-- GEBIT: end -->
   </properties>
 
   <dependencyManagement>
@@ -317,6 +324,19 @@
           </systemProperties>
         </configuration>
       </plugin>
+
+      <plugin>
+        <groupId>io.repaint.maven</groupId>
+        <artifactId>tiles-maven-plugin</artifactId>
+        <version>${version.tiles}</version>
+        <extensions>true</extensions>
+        <configuration>
+          <tiles combine.children="append">
+            <tile>de.gebit.build.forked.tile:jenkins-plugin:${version.gebit-forked}</tile>
+          </tiles>
+        </configuration>
+      </plugin>
+
       <plugin>
         <artifactId>maven-enforcer-plugin</artifactId>
         <executions>
@@ -346,6 +366,13 @@
         </executions>
       </plugin>
     </plugins>
+    <extensions>
+      <extension>
+        <groupId>de.gebit.build.maven</groupId>
+        <artifactId>gebit-build-extension</artifactId>
+        <version>${version.gebit-build-extension}</version>
+      </extension>
+    </extensions>
   </build>
 
   <profiles>
