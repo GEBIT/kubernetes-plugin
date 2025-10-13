@@ -173,6 +173,8 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
 
     private WorkspaceVolume workspaceVolume;
 
+    private MountWorkspaceBlock mountWorkspace;
+
     private final List<PodVolume> volumes = new ArrayList<>();
 
     private List<ContainerTemplate> containers = new ArrayList<>();
@@ -234,6 +236,18 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
 
     private Boolean showRawYaml;
 
+    public static class MountWorkspaceBlock implements Serializable {
+
+        private static final long serialVersionUID = 1L;
+
+        private WorkspaceVolume workspaceVolume;
+
+        @DataBoundConstructor
+        public MountWorkspaceBlock(WorkspaceVolume workspaceVolume) {
+            this.workspaceVolume = workspaceVolume;
+        }
+    }
+
     /**
      * Listener of the run that created this pod template, if applicable
      */
@@ -245,6 +259,7 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
 
     public PodTemplate() {
         this((String) null);
+        setMountWorkspace(true);
     }
 
     @DataBoundConstructor
@@ -842,6 +857,32 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
         this.workspaceVolume = WorkspaceVolume.getDefault().equals(workspaceVolume) ? null : workspaceVolume;
     }
 
+    public boolean isMountWorkspace() {
+        return mountWorkspace != null;
+    }
+
+    public void setMountWorkspace(boolean mountWorkspace) {
+        if (mountWorkspace) {
+            if (this.workspaceVolume != null) {
+                this.mountWorkspace = new MountWorkspaceBlock(this.workspaceVolume);
+            } else {
+                this.mountWorkspace = new MountWorkspaceBlock(WorkspaceVolume.getDefault());
+            }
+        } else {
+            this.mountWorkspace = null;
+        }
+    }
+
+    @DataBoundSetter
+    public void setMountWorkspace(MountWorkspaceBlock mountWorkspaceBlock) {
+        if (mountWorkspaceBlock != null) {
+            this.mountWorkspace = mountWorkspaceBlock;
+            setWorkspaceVolume(mountWorkspaceBlock.workspaceVolume);
+        } else {
+            this.mountWorkspace = null;
+        }
+    }
+
     @DataBoundSetter
     public void setContainers(@NonNull List<ContainerTemplate> items) {
         synchronized (this.containers) {
@@ -1184,6 +1225,7 @@ public class PodTemplate extends AbstractDescribableImpl<PodTemplate> implements
                 + (resourceLimitEphemeralStorage == null
                         ? ""
                         : ", resourceLimitEphemeralStorage='" + resourceLimitEphemeralStorage + '\'')
+                + (", mountWorkspace='" + isMountWorkspace() + '\'')
                 + (workspaceVolume == null ? "" : ", workspaceVolume='" + workspaceVolume + '\'')
                 + (podRetention == null ? "" : ", podRetention='" + podRetention + '\'')
                 + (volumes == null || volumes.isEmpty() ? "" : ", volumes=" + volumes)

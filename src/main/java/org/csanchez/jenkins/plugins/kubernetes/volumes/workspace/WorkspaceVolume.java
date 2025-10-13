@@ -37,6 +37,7 @@ import java.io.Serializable;
 public abstract class WorkspaceVolume extends AbstractDescribableImpl<WorkspaceVolume> implements Serializable {
 
     private static final long serialVersionUID = 5367004248055474414L;
+    private static final String DEFAULT_HOST_PATH = "/var/jenkins_workspaces/";
 
     public static WorkspaceVolume merge(WorkspaceVolume parentWorkspaceVolume, WorkspaceVolume templateVolume) {
         // Only override parent if differ from the default
@@ -44,7 +45,10 @@ public abstract class WorkspaceVolume extends AbstractDescribableImpl<WorkspaceV
     }
 
     public static WorkspaceVolume getDefault() {
-        return new EmptyDirWorkspaceVolume(false);
+        // get the jenkins shortname (e.g. pos, gebit-build, etc)
+        String shortname = System.getenv("JENKINS_SHORTNAME");
+        // use it to return a default hostpath workspace volume
+        return new HostPathWorkspaceVolume(DEFAULT_HOST_PATH + shortname);
     }
 
     // Builds a Volume model with the given name.require podName to generate pvc name
