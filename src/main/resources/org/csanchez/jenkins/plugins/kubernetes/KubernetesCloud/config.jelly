@@ -83,7 +83,7 @@ THE SOFTWARE.
     </f:entry>
 
     <f:entry title="${%Concurrency Limit}" field="containerCapStr">
-      <f:number default="10"/>
+      <f:number default=""/>
     </f:entry>
 
     <f:entry title="${%Pod Labels}" field="podLabels">
