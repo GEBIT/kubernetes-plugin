@@ -10,7 +10,7 @@
 
   <groupId>org.csanchez.jenkins.plugins</groupId>
   <artifactId>kubernetes</artifactId>
-  <version>${changelist}</version>
+  <version>4384.v1b_6367f393d9-gebit1</version>
   <packaging>hpi</packaging>
   <name>Kubernetes plugin</name>
   <description>Jenkins plugin to run dynamic agents in a Kubernetes cluster</description>
