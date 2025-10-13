@@ -89,11 +89,17 @@ public class PodTemplateUtils {
                 parent.getPorts().stream().collect(Collectors.toMap(PortMapping::getName, Function.identity()));
         template.getPorts().forEach(p -> ports.put(p.getName(), p));
 
+        // make it so alwaysPullImage == false wins. we want to disable alwaysPullImage by default and only use it when
+        // explicitly set
+        boolean alwaysPullImage = !template.isAlwaysPullImage()
+                ? template.isAlwaysPullImage()
+                : (!parent.isAlwaysPullImage() ? parent.isAlwaysPullImage() : true);
+
         var h = new HierarchyResolver<>(parent, template);
         ContainerTemplate combined = new ContainerTemplate(
                 template.getName(), h.resolve(ContainerTemplate::getImage, PodTemplateUtils::isNullOrEmpty));
 
-        combined.setAlwaysPullImage(h.resolve(ContainerTemplate::isAlwaysPullImage, v -> !v));
+        combined.setAlwaysPullImage(alwaysPullImage);
         combined.setCommand(h.resolve(ContainerTemplate::getCommand, PodTemplateUtils::isNullOrEmpty));
         combined.setArgs(h.resolve(ContainerTemplate::getArgs, PodTemplateUtils::isNullOrEmpty));
         combined.setTtyEnabled(h.resolve(ContainerTemplate::isTtyEnabled, v -> !v));
