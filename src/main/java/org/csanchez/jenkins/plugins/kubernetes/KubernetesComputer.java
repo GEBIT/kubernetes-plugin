@@ -30,6 +30,8 @@ import java.util.logging.Logger;
 import jenkins.model.Jenkins;
 import org.acegisecurity.Authentication;
 import org.apache.commons.lang.StringUtils;
+import org.jenkinsci.plugins.cloudstats.ProvisioningActivity.Id;
+import org.jenkinsci.plugins.cloudstats.TrackedItem;
 import org.jenkinsci.plugins.kubernetes.auth.KubernetesAuthException;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest2;
@@ -41,13 +43,17 @@ import org.kohsuke.stapler.framework.io.LargeText;
 /**
  * @author Carlos Sanchez carlos@apache.org
  */
-public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> {
+public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> implements TrackedItem {
     private static final Logger LOGGER = Logger.getLogger(KubernetesComputer.class.getName());
 
     private boolean launching;
 
+    // id for cloud-stats plugin
+    private transient Id id;
+
     public KubernetesComputer(KubernetesSlave slave) {
         super(slave);
+        id = slave.getId();
     }
 
     @Override
@@ -243,5 +249,13 @@ public class KubernetesComputer extends AbstractCloudComputer<KubernetesSlave> {
         if (acceptingTasks) {
             launching = false;
         }
+    }
+
+    public Id getId() {
+        return id;
+    }
+
+    public void setId(Id id) {
+        this.id = id;
     }
 }
