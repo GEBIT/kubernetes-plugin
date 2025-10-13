@@ -43,6 +43,7 @@ import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
+import io.fabric8.kubernetes.client.utils.Serialization;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
@@ -232,10 +233,35 @@ public class KubernetesLauncher extends JNLPLauncher {
             template.getWorkspaceVolume().createVolume(client, podMetadata);
             template.getVolumes().forEach(volume -> volume.createVolume(client, podMetadata));
 
-            client.pods()
-                    .inNamespace(namespace)
-                    .withName(podName)
-                    .waitUntilReady(template.getSlaveConnectTimeout(), TimeUnit.SECONDS);
+            try {
+                client.pods()
+                        .inNamespace(namespace)
+                        .withName(podName)
+                        .waitUntilReady(template.getSlaveConnectTimeout(), TimeUnit.SECONDS);
+            } catch (Throwable ex) {
+                Pod timeoutPod =
+                        client.pods().inNamespace(namespace).withName(podName).get();
+                node.getRunListener().error("Exception while waiting for pod to be ready: {0}", new Object[] {ex});
+                LOGGER.log(Level.WARNING, "Exception while waiting for pod to be ready: {0}", new Object[] {ex});
+                if (timeoutPod != null) {
+                    // in rare cases (kubelet pull qps limit reached, for example)
+                    // there is still a pod left and we can log out additional info like pod status
+                    node.getRunListener()
+                            .error(
+                                    "Exception while waiting for pod to be ready: slaveConnectTimeout: {0}, pod:\n{1}",
+                                    new Object[] {template.getSlaveConnectTimeout(), Serialization.asYaml(timeoutPod)});
+                    LOGGER.log(
+                            Level.WARNING,
+                            "Exception while waiting for pod to be ready: slaveConnectTimeout: {0}, pod:\n{1}",
+                            new Object[] {template.getSlaveConnectTimeout(), Serialization.asYaml(timeoutPod)});
+                } else {
+                    node.getRunListener()
+                            .error("Exception while waiting for pod to be ready: no extra pod info available");
+                    LOGGER.log(
+                            Level.WARNING, "Exception while waiting for pod to be ready: no extra pod info available");
+                }
+                throw ex;
+            }
 
             LOGGER.log(INFO, () -> "Pod is running: " + cloudName + " " + namespace + "/" + podName);
 
