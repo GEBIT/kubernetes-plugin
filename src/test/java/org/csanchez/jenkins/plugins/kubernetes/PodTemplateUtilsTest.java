@@ -53,6 +53,7 @@ import hudson.tools.ToolLocationNodeProperty;
 import io.fabric8.kubernetes.api.model.ConfigMapEnvSource;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerBuilder;
+import io.fabric8.kubernetes.api.model.ContainerPort;
 import io.fabric8.kubernetes.api.model.EnvFromSource;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.Pod;
@@ -737,6 +738,24 @@ public class PodTemplateUtilsTest {
 
         port2.setName("port-1");
         assertThat(combine(template1, template2).getPorts(), contains(port2));
+    }
+
+    @Test
+    public void shouldCombineAllContainerPorts() {
+        Container container1 = new Container();
+        ContainerPort port1 = new ContainerPort(1000, "", 1000, "port-1", "");
+        container1.setPorts(Arrays.asList(port1));
+
+        Container container2 = new Container();
+        assertThat(combine(container1, container2).getPorts(), contains(port1));
+
+        ContainerPort port2 = new ContainerPort(2000, "", 2000, "port-2", "");
+        container2.setPorts(Arrays.asList(port2));
+
+        assertThat(combine(container1, container2).getPorts(), containsInAnyOrder(port1, port2));
+
+        port2.setName("port-1");
+        assertThat(combine(container1, container2).getPorts(), contains(port2));
     }
 
     @Test

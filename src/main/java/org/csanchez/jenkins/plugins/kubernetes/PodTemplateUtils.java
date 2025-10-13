@@ -16,6 +16,7 @@ import hudson.slaves.NodeProperty;
 import io.fabric8.kubernetes.api.model.Capabilities;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerBuilder;
+import io.fabric8.kubernetes.api.model.ContainerPort;
 import io.fabric8.kubernetes.api.model.EnvFromSource;
 import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
@@ -25,6 +26,7 @@ import io.fabric8.kubernetes.api.model.PodBuilder;
 import io.fabric8.kubernetes.api.model.PodSpec;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
+import io.fabric8.kubernetes.api.model.SeccompProfile;
 import io.fabric8.kubernetes.api.model.Toleration;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeMount;
@@ -136,28 +138,42 @@ public class PodTemplateUtils {
         }
         var h = new HierarchyResolver<>(parent, template);
 
+        Map<String, ContainerPort> ports =
+                parent.getPorts().stream().collect(Collectors.toMap(ContainerPort::getName, Function.identity()));
+        template.getPorts().stream().forEach(p -> ports.put(p.getName(), p));
+
         Boolean privileged;
         Long runAsUser;
         Long runAsGroup;
+        Boolean allowPrivEscal;
+        SeccompProfile seccompProfile;
         if (template.getSecurityContext() != null) {
             if (parent.getSecurityContext() != null) {
                 privileged = h.resolve(c -> c.getSecurityContext().getPrivileged(), Objects::isNull);
                 runAsUser = h.resolve(c -> c.getSecurityContext().getRunAsUser(), Objects::isNull);
                 runAsGroup = h.resolve(c -> c.getSecurityContext().getRunAsGroup(), Objects::isNull);
+                allowPrivEscal = h.resolve(c -> c.getSecurityContext().getAllowPrivilegeEscalation(), Objects::isNull);
+                seccompProfile = h.resolve(c -> c.getSecurityContext().getSeccompProfile(), Objects::isNull);
             } else {
                 privileged = template.getSecurityContext().getPrivileged();
                 runAsUser = template.getSecurityContext().getRunAsUser();
                 runAsGroup = template.getSecurityContext().getRunAsGroup();
+                allowPrivEscal = template.getSecurityContext().getAllowPrivilegeEscalation();
+                seccompProfile = template.getSecurityContext().getSeccompProfile();
             }
         } else {
             if (parent.getSecurityContext() != null) {
                 privileged = parent.getSecurityContext().getPrivileged();
                 runAsUser = parent.getSecurityContext().getRunAsUser();
                 runAsGroup = parent.getSecurityContext().getRunAsGroup();
+                allowPrivEscal = parent.getSecurityContext().getAllowPrivilegeEscalation();
+                seccompProfile = parent.getSecurityContext().getSeccompProfile();
             } else {
                 privileged = Boolean.FALSE;
                 runAsUser = null;
                 runAsGroup = null;
+                allowPrivEscal = Boolean.FALSE;
+                seccompProfile = null;
             }
         }
         Map<String, VolumeMount> volumeMounts = parent.getVolumeMounts().stream()
@@ -176,18 +192,23 @@ public class PodTemplateUtils {
                 .withRequests(Map.copyOf(combineResources(parent, template, ResourceRequirements::getRequests))) //
                 .withLimits(Map.copyOf(combineResources(parent, template, ResourceRequirements::getLimits))) //
                 .endResources() //
+                .withPorts(Collections.unmodifiableList(new ArrayList<>(ports.values())))
                 .withEnv(combineEnvVars(parent, template)) //
                 .withEnvFrom(combinedEnvFromSources(parent, template))
                 .withVolumeMounts(List.copyOf(volumeMounts.values()));
         if ((privileged != null && privileged)
                 || runAsUser != null
                 || runAsGroup != null
+                || (allowPrivEscal != null && allowPrivEscal)
+                || seccompProfile != null
                 || combineCapabilities(parent, template) != null) {
             containerBuilder = containerBuilder
                     .withNewSecurityContextLike(parent.getSecurityContext())
                     .withPrivileged(privileged)
                     .withRunAsUser(runAsUser)
                     .withRunAsGroup(runAsGroup)
+                    .withAllowPrivilegeEscalation(allowPrivEscal)
+                    .withSeccompProfile(seccompProfile)
                     .withCapabilities(combineCapabilities(parent, template))
                     .endSecurityContext();
         }
