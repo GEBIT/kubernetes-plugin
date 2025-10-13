@@ -134,7 +134,11 @@ THE SOFTWARE.
     <f:textbox/>
   </f:entry>
 
-  <f:dropdownDescriptorSelector title="${%Workspace Volume}" field="workspaceVolume" default="${descriptor.defaultWorkspaceVolume}"/>
+  <f:optionalBlock name="mountWorkspace" field="mountWorkspace" title="${%Mount Workspace}">
+    <f:entry title="${%Workspace Volume}">
+      <f:dropdownDescriptorSelector field="workspaceVolume" default="${descriptor.defaultWorkspaceVolume}"/>
+    </f:entry>
+  </f:optionalBlock>
 
   <f:descriptorList title="${%Node Properties}" descriptors="${h.getNodePropertyDescriptors(descriptor.clazz)}" field="nodeProperties" />
 

@@ -3,7 +3,7 @@ package org.csanchez.jenkins.plugins.kubernetes.pipeline;
 import org.csanchez.jenkins.plugins.kubernetes.pod.retention.OnFailure;
 import org.csanchez.jenkins.plugins.kubernetes.pod.retention.PodRetention;
 import org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.DynamicPVCWorkspaceVolume;
-import org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.EmptyDirWorkspaceVolume;
+import org.csanchez.jenkins.plugins.kubernetes.volumes.workspace.WorkspaceVolume;
 import org.jenkinsci.plugins.workflow.cps.SnippetizerTester;
 import org.junit.Rule;
 import org.junit.Test;
@@ -48,8 +48,7 @@ public class PodTemplateStepTest {
         st.assertRoundTrip(step, "podTemplate {\n    // some block\n}");
         step.setWorkspaceVolume(new DynamicPVCWorkspaceVolume());
         st.assertRoundTrip(step, "podTemplate(workspaceVolume: dynamicPVC()) {\n    // some block\n}");
-        step.setWorkspaceVolume(
-                new EmptyDirWorkspaceVolume(false)); // this is the default, it should not be in the snippet.
+        step.setWorkspaceVolume(WorkspaceVolume.getDefault()); // this is the default, it should not be in the snippet.
         st.assertRoundTrip(step, "podTemplate {\n    // some block\n}");
         DynamicPVCWorkspaceVolume workspaceVolume = new DynamicPVCWorkspaceVolume();
         workspaceVolume.setAccessModes("ReadWriteMany");

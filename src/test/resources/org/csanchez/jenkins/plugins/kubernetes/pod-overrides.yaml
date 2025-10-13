@@ -8,7 +8,7 @@ spec:
       runAsUser: 3000
       runAsGroup: 4000
     volumeMounts:
-    - mountPath: /home/jenkins/agent
+    - mountPath: /var/jenkins_home/workspace
       name: host-volume
     resources:
       limits:

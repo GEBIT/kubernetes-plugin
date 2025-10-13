@@ -101,6 +101,9 @@ public class KubernetesDeclarativeAgent extends RetryableDeclarativeAgent<Kubern
     private WorkspaceVolume workspaceVolume;
 
     @CheckForNull
+    private Boolean mountWorkspace;
+
+    @CheckForNull
     private String supplementalGroups;
 
     @CheckForNull
@@ -328,6 +331,15 @@ public class KubernetesDeclarativeAgent extends RetryableDeclarativeAgent<Kubern
         this.yamlMergeStrategy = yamlMergeStrategy;
     }
 
+    @DataBoundSetter
+    public void setMountWorkspace(Boolean mountWorkspace) {
+        this.mountWorkspace = mountWorkspace;
+    }
+
+    public boolean isMountWorkspace() {
+        return mountWorkspace != null ? mountWorkspace.booleanValue() : true;
+    }
+
     public boolean isInheritYamlMergeStrategy() {
         return Optional.ofNullable(inheritYamlMergeStrategy).orElse(false);
     }
@@ -413,6 +425,9 @@ public class KubernetesDeclarativeAgent extends RetryableDeclarativeAgent<Kubern
         }
         if (workspaceVolume != null) {
             argMap.put("workspaceVolume", workspaceVolume);
+        }
+        if (mountWorkspace != null) {
+            argMap.put("mountWorkspace", mountWorkspace);
         }
         if (!StringUtils.isEmpty(cloud)) {
             argMap.put("cloud", cloud);

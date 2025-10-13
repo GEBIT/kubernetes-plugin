@@ -69,6 +69,7 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import jenkins.model.Jenkins;
 import jenkins.util.SystemProperties;
 import org.apache.commons.lang.StringUtils;
@@ -92,8 +93,13 @@ public class PodTemplateBuilder {
 
     private static final Logger LOGGER = Logger.getLogger(PodTemplateBuilder.class.getName());
 
-    private static final String WORKSPACE_VOLUME_NAME = "workspace-volume";
+    public static final String WORKSPACE_VOLUME_NAME = "workspace-volume";
+
     public static final Pattern FROM_DIRECTIVE = Pattern.compile("^FROM (.*)$");
+    private static final VolumeMount DEFAULT_WORKSPACE_VOLUME_MOUNT = new VolumeMountBuilder()
+            .withName(WORKSPACE_VOLUME_NAME)
+            .withReadOnly(false)
+            .build();
 
     public static final String LABEL_KUBERNETES_CONTROLLER = "kubernetes.jenkins.io/controller";
     static final String NO_RECONNECT_AFTER_TIMEOUT =
@@ -209,7 +215,12 @@ public class PodTemplateBuilder {
             }
         }
 
-        volumes.put(WORKSPACE_VOLUME_NAME, template.getWorkspaceVolume().buildVolume(WORKSPACE_VOLUME_NAME, podName));
+        if (template.isMountWorkspace()) {
+            volumes.put(
+                    WORKSPACE_VOLUME_NAME,
+                    template.getWorkspaceVolume()
+                            .buildVolume(WORKSPACE_VOLUME_NAME, agent != null ? agent.getPodName() : null));
+        }
 
         Map<String, Container> containers = new HashMap<>();
         // containers from pod template
@@ -414,12 +425,51 @@ public class PodTemplateBuilder {
 
             agentContainer.setResources(reqs);
         }
+
+        if (template.isMountWorkspace()) {
+            // moved this from DefaultWorkspaceVolume decorator to here, so mountWorkspace can be checked
+            // for all containers and initContainers
+
+            // default workspace volume mount. If something is already mounted in the same path ignore it
+            Stream.concat(pod.getSpec().getContainers().stream(), pod.getSpec().getInitContainers().stream())
+                    .filter(c -> c.getVolumeMounts().stream()
+                            .noneMatch(vm -> vm.getMountPath().equals(getWorkspaceMountPath(c))))
+                    .forEach(c -> {
+                        List<VolumeMount> mounts =
+                                c.getVolumeMounts() == null ? new ArrayList<>() : c.getVolumeMounts();
+                        mounts.add(new VolumeMountBuilder(DEFAULT_WORKSPACE_VOLUME_MOUNT)
+                                .withMountPath(getWorkspaceMountPath(c))
+                                .build());
+                        c.setVolumeMounts(mounts);
+                    });
+            LOGGER.fine("Added default workspace volume to all containers");
+        } else {
+            // mountWorkspace is disabled, remove workspace mount from all containers
+            Stream.concat(pod.getSpec().getContainers().stream(), pod.getSpec().getInitContainers().stream())
+                    .filter(c -> c.getVolumeMounts().stream()
+                            .anyMatch(vm -> vm.getName().equals(WORKSPACE_VOLUME_NAME)))
+                    .forEach(c -> {
+                        c.getVolumeMounts().removeIf(vm -> vm.getName().equals(WORKSPACE_VOLUME_NAME));
+                    });
+            // also remove volume itself
+            pod.getSpec().getVolumes().removeIf(v -> v.getName().equals(WORKSPACE_VOLUME_NAME));
+            LOGGER.fine("Removed default workspace volume from all containers");
+        }
+
         if (cloud != null) {
             pod = PodDecorator.decorateAll(cloud, pod);
         }
         Pod finalPod = pod;
         LOGGER.finest(() -> "Pod built: " + Serialization.asYaml(finalPod));
         return pod;
+    }
+
+    private String getWorkspaceMountPath(Container c) {
+        String workingDir = c.getWorkingDir();
+        if (workingDir == null) {
+            workingDir = ContainerTemplate.DEFAULT_WORKING_DIR;
+        }
+        return workingDir + "/" + ContainerTemplate.WORKSPACE_DIR_NAME;
     }
 
     private String normalizePath(String np) {
@@ -538,7 +588,10 @@ public class PodTemplateBuilder {
                 .map(entry -> entry.toPort())
                 .toArray(size -> new ContainerPort[size]);
 
-        List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, workingDir);
+        // remove this, it only adds a default workspace volume (despite the name)
+        // adding a default workspace volume is done at the end of build() with stream processing
+        // List<VolumeMount> containerMounts = getContainerVolumeMounts(volumeMounts, workingDir);
+        List<VolumeMount> containerMounts = new ArrayList<>(volumeMounts);
 
         ContainerLivenessProbe clp = containerTemplate.getLivenessProbe();
         Probe livenessProbe = null;
@@ -587,27 +640,6 @@ public class PodTemplateBuilder {
                         containerTemplate.getResourceLimitEphemeralStorage()))
                 .endResources()
                 .build();
-    }
-
-    private VolumeMount getDefaultVolumeMount(@CheckForNull String workingDir) {
-        String wd = workingDir;
-        if (wd == null) {
-            wd = DEFAULT_WORKING_DIR;
-            LOGGER.log(Level.FINE, "Container workingDir is null, defaulting to {0}", wd);
-        }
-        return new VolumeMountBuilder()
-                .withMountPath(wd)
-                .withName(WORKSPACE_VOLUME_NAME)
-                .withReadOnly(false)
-                .build();
-    }
-
-    private List<VolumeMount> getContainerVolumeMounts(Collection<VolumeMount> volumeMounts, String workingDir) {
-        List<VolumeMount> containerMounts = new ArrayList<>(volumeMounts);
-        if (!isNullOrEmpty(workingDir) && !PodVolume.volumeMountExists(workingDir, volumeMounts)) {
-            containerMounts.add(getDefaultVolumeMount(workingDir));
-        }
-        return containerMounts;
     }
 
     private Map<String, Quantity> getResourcesMap(String memory, String cpu, String ephemeralStorage) {
