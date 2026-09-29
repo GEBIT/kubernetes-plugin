@@ -83,6 +83,7 @@ class TaskListenerEventWatcherTest {
         verify(listener).getLogger();
         ps.flush();
         String output = bos.toString(StandardCharsets.UTF_8);
-        assertEquals("[Update][bar/foo-123][because] cat\n[Update][bar/foo-123][because] dog\n", output);
+        String nl = System.lineSeparator();
+        assertEquals("[Update][bar/foo-123][because] cat" + nl + "[Update][bar/foo-123][because] dog" + nl, output);
     }
 }
