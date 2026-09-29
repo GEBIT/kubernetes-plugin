@@ -40,6 +40,14 @@
   </scm>
 
   <properties>
+    <!-- GEBIT: versions to be used for gebit-build support -->
+    <java.version>21</java.version>
+    <version.tiles>2.8-gebit42</version.tiles>
+    <version.build>3.17.0</version.build>
+    <version.gebit-build-extension>2.1.0</version.gebit-build-extension>
+    <version.gebit-forked>1.1.0</version.gebit-forked>
+    <!-- GEBIT: end -->
+
     <changelist>999999-SNAPSHOT</changelist>
     <jenkins.baseline>2.516</jenkins.baseline>
     <jenkins.version>${jenkins.baseline}.3</jenkins.version>
@@ -284,6 +292,20 @@
 
   <build>
     <plugins>
+      <!-- GEBIT: Tiles -->
+      <plugin>
+        <groupId>io.repaint.maven</groupId>
+        <artifactId>tiles-maven-plugin</artifactId>
+        <version>${version.tiles}</version>
+        <extensions>true</extensions>
+        <configuration>
+          <tiles>
+            <tile>de.gebit.build.forked.tile:jenkins-plugin:${version.gebit-forked}</tile>
+          </tiles>
+        </configuration>
+      </plugin>
+      <!-- GEBIT: end -->
+
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
@@ -331,6 +353,16 @@
         </executions>
       </plugin>
     </plugins>
+
+    <!-- GEBIT: Extensions -->
+    <extensions>
+      <extension>
+        <groupId>de.gebit.build.maven</groupId>
+        <artifactId>gebit-build-extension</artifactId>
+        <version>${version.gebit-build-extension}</version>
+      </extension>
+    </extensions>
+    <!-- GEBIT: end -->
   </build>
 
   <profiles>

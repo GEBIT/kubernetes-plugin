@@ -1,3 +1,8 @@
+# GEBIT start
+eclipse-target/
+.factorypath
+# GEBIT end
+
 /target/
 /.classpath
 /.project

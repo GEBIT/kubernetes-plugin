@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 http://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+	<!-- See GBLD-1728 for details -->
+	<mirrors>
+		<mirror>
+			<id>Nexus</id>
+			<name>All project dependencies</name>
+			<url>https://gebit-nexus.local.gebit.de/content/groups/gebit-dependencies</url>
+			<mirrorOf>external:*,!jenkins</mirrorOf> <!-- Comm-separated list of mirrorOf must not contain spaces! -->
+		</mirror>
+	</mirrors>
+
+	<!-- you will need a matching ~/.m2/security-settings.xml -->
+	<servers>
+		<server>
+			<id>gebit-releases</id>
+			<username>${env.NEXUS_GEBIT_BUILD_USERNAME}</username>
+			<password>${env.NEXUS_GEBIT_BUILD_PASSWORD}</password>
+		</server>
+	</servers>
+
+ 	<profiles>
+		<profile>
+			<id>nexus-profile</id>
+			<!-- These repository configs are required to anable fetching snapshot dependencies from the <mirror> repository.
+				 The actual id and url are not relevant.
+				 The hardcoded 'central' repository has no snapshots enabled. -->
+			<repositories>
+				<repository>
+					<!-- Do not remove. -->
+					<id>dummy</id>
+					<url>https://gebit-dummy</url>
+				</repository>
+			</repositories>
+			<pluginRepositories>
+				<pluginRepository>
+					<!-- Do not remove. -->
+					<id>dummy</id>
+					<url>https://gebit-dummy</url>
+				</pluginRepository>
+			</pluginRepositories>
+		</profile>
+	</profiles>
+
+	<activeProfiles>
+		<activeProfile>nexus-profile</activeProfile>
+	</activeProfiles>
+</settings>
